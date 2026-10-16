@@ -23,16 +23,17 @@ Call-ins follow the workbook: Here + Late + Absent are counted; Exempt is exclud
 2. In the Supabase SQL Editor, run [`supabase/schema.sql`](supabase/schema.sql) once. If it reports that a policy already exists, do not rerun it; continue with the migration below.
 3. In the SQL Editor, run [`supabase/migration_accounts_and_roster_admin.sql`](supabase/migration_accounts_and_roster_admin.sql).
 4. In the SQL Editor, run [`supabase/migration_admin_tools_and_times.sql`](supabase/migration_admin_tools_and_times.sql). This adds the optional time field and admin-only bulk actions; old rehearsals keep their dates and records.
-5. In **Authentication → Providers → Email**, disable public sign-ups. Keep email/password sign-in enabled.
-6. In **Authentication → URL Configuration**, set Site URL and add the GitHub Pages site URL to the allowed redirect URLs (including the site root).
-7. Invite each production team member under **Authentication → Users**. Add each invited email to `public.authorized_users` from the SQL Editor, in lowercase:
+5. In the SQL Editor, run [`supabase/migration_security_advisor.sql`](supabase/migration_security_advisor.sql). This changes the authorization helpers to run with caller permissions and restricts the admin-status lookup to the signed-in user's own email. It does not change rehearsal, attendance, or cast records.
+6. In **Authentication → Providers → Email**, disable public sign-ups. Keep email/password sign-in enabled.
+7. In **Authentication → URL Configuration**, set Site URL and add the GitHub Pages site URL to the allowed redirect URLs (including the site root).
+8. Invite each production team member under **Authentication → Users**. Add each invited email to `public.authorized_users` from the SQL Editor, in lowercase:
 
    ```sql
    insert into public.authorized_users (email) values ('person@example.com');
    ```
 
    The invited person opens the email link at Callboard and chooses a username and password. They must be on the allowlist before finishing setup. Only authorized emails can read production data. Authenticated accounts without an allowlist entry see no cast or attendance data. Do not grant team members SQL Editor or project-owner access unless they need database administration.
-8. Add only the production administrator's email to `public.callboard_roster_admins`, in lowercase. Run this in SQL Editor after inviting and allowlisting that person:
+9. Add only the production administrator's email to `public.callboard_roster_admins`, in lowercase. Run this in SQL Editor after inviting and allowlisting that person:
 
    ```sql
    insert into public.callboard_roster_admins (email)
