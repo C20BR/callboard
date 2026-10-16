@@ -12,6 +12,7 @@ create table if not exists public.cast_members (
   id uuid primary key default gen_random_uuid(),
   name text not null check (length(trim(name)) > 0),
   characters text not null default '',
+  tags text[] not null default '{}'::text[],
   created_at timestamptz not null default now()
 );
 
