@@ -10,23 +10,34 @@ A mobile-friendly attendance tracker for rehearsal teams. It runs as a static si
 - Confirmed rehearsal saves, duplicate date/type review, attendance notes, and editable history.
 - Corrections update the underlying attendance record, so late, absence, and call-in totals stay synchronized.
 - A late-versus-absence chart, cast summary, and JSON backup download.
-- Invite-only Supabase sign-in, database Row Level Security, and an installable PWA shell.
+- Invite-only Supabase sign-in, user-chosen usernames and passwords, database Row Level Security, and an installable PWA shell.
+- The production administrator is the only account that can add, edit, or remove cast members. Every authorized member can take attendance; their username is recorded as the attendance taker.
 
 Call-ins follow the workbook: Here + Late + Absent are counted; Exempt is excluded. The app stores Exempt rows too, so each session retains every cast member's marked status. There is no separate expected-rehearsal schedule, so an actor not yet marked in a session is not counted.
 
 ## 1. Create the private database
 
 1. Create a Supabase project and keep its database password private.
-2. In the Supabase SQL Editor, run [`supabase/schema.sql`](supabase/schema.sql).
-3. In **Authentication → Providers → Email**, disable public sign-ups. Keep email/password sign-in enabled.
-4. In **Authentication → URL Configuration**, add the GitHub Pages site URL to the allowed redirect URLs (including the site root).
-5. Invite each production team member under **Authentication → Users**. Add each invited email to `public.authorized_users` from the SQL Editor, in lowercase:
+2. In the Supabase SQL Editor, run [`supabase/schema.sql`](supabase/schema.sql) once. If it reports that a policy already exists, do not rerun it; continue with the migration below.
+3. In the SQL Editor, run [`supabase/migration_accounts_and_roster_admin.sql`](supabase/migration_accounts_and_roster_admin.sql).
+4. In **Authentication → Providers → Email**, disable public sign-ups. Keep email/password sign-in enabled.
+5. In **Authentication → URL Configuration**, set Site URL and add the GitHub Pages site URL to the allowed redirect URLs (including the site root).
+6. Invite each production team member under **Authentication → Users**. Add each invited email to `public.authorized_users` from the SQL Editor, in lowercase:
 
    ```sql
    insert into public.authorized_users (email) values ('person@example.com');
    ```
 
-   Only authorized emails can read production data. Authenticated accounts without an allowlist entry see no cast or attendance data. Do not grant team members SQL editor or project-owner access unless they need database administration.
+   The invited person opens the email link at Callboard and chooses a username and password. They must be on the allowlist before finishing setup. Only authorized emails can read production data. Authenticated accounts without an allowlist entry see no cast or attendance data. Do not grant team members SQL Editor or project-owner access unless they need database administration.
+7. Add only the production administrator's email to `public.callboard_roster_admins`, in lowercase. Run this in SQL Editor after inviting and allowlisting that person:
+
+   ```sql
+   insert into public.callboard_roster_admins (email)
+   values ('admin@example.com')
+   on conflict (email) do nothing;
+   ```
+
+   Do not add other users to this table. Other authorized users can take attendance and see the shared roster but cannot change its cast members. The admin table is separate from the general authorized-user allowlist.
 
 ## 2. Configure GitHub Pages
 
@@ -53,6 +64,6 @@ The history page allows a rehearsal to be deleted only after an explicit confirm
 
 - This is a static front end. It does not include secrets or a server-side API.
 - Authorization is enforced by PostgreSQL Row Level Security, not just by hiding the sign-in form.
-- `authorized_users` is intended to be maintained by a production administrator in the Supabase SQL Editor; the app does not provide a user-management screen.
+- `authorized_users` and `callboard_roster_admins` are maintained by the production administrator in the Supabase SQL Editor; the app does not provide a user-management screen.
 - The service worker caches only same-origin app files and never caches Supabase API responses.
 - Do not publish real attendance data, Supabase database passwords, or service-role keys in this repository.

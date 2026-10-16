@@ -1,10 +1,12 @@
 (() => {
   const config = window.CALLBOARD_CONFIG || {};
+  const initialAuthType = new URLSearchParams(`${location.search}&${location.hash.slice(1)}`).get('type');
+  let authFlow = initialAuthType === 'invite' ? 'invite' : initialAuthType === 'recovery' ? 'recovery' : '';
   const configured = config.supabaseUrl && config.supabaseAnonKey && !config.supabaseUrl.includes('YOUR-') && !config.supabaseAnonKey.includes('YOUR_');
   const client = configured && window.supabase ? window.supabase.createClient(config.supabaseUrl, config.supabaseAnonKey) : null;
   const $ = (selector, root = document) => root.querySelector(selector);
   const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
-  const state = { user: null, cast: [], types: [], sessions: [], records: [], statuses: new Map(), notes: new Map() };
+  const state = { user: null, profile: null, isRosterAdmin: false, cast: [], types: [], sessions: [], records: [], statuses: new Map(), notes: new Map() };
   const statusValues = ['Here', 'Late', 'Absent', 'Exempt'];
   let toastTimer;
 
@@ -18,10 +20,22 @@
   }
   function showAuth(message = '') {
     $('#auth-view').classList.remove('hidden'); $('#app-view').classList.add('hidden'); $('#signout').classList.add('hidden');
+    $('#login-form').classList.remove('hidden'); $('#setup-form').classList.add('hidden'); $('#recovery-form').classList.add('hidden');
     $('#auth-message').textContent = message; setConnection(false, 'Sign in to connect');
+  }
+  function showSetup(message = '') {
+    $('#auth-view').classList.remove('hidden'); $('#app-view').classList.add('hidden'); $('#signout').classList.remove('hidden');
+    $('#login-form').classList.add('hidden'); $('#setup-form').classList.remove('hidden'); $('#recovery-form').classList.add('hidden');
+    $('#setup-message').textContent = message; setConnection(true, 'Invitation ready');
+  }
+  function showRecovery(message = '') {
+    $('#auth-view').classList.remove('hidden'); $('#app-view').classList.add('hidden'); $('#signout').classList.remove('hidden');
+    $('#login-form').classList.add('hidden'); $('#setup-form').classList.add('hidden'); $('#recovery-form').classList.remove('hidden');
+    $('#recovery-message').textContent = message; setConnection(true, 'Password reset');
   }
   async function showApp() {
     $('#auth-view').classList.add('hidden'); $('#app-view').classList.remove('hidden'); $('#signout').classList.remove('hidden');
+    $('#session-taker').value = state.profile?.username || ''; $('#session-taker').readOnly = true;
     $('#today-label').textContent = new Intl.DateTimeFormat(undefined, { weekday: 'long', month: 'long', day: 'numeric' }).format(new Date()).toUpperCase();
     setConnection(true, 'Connected securely'); await loadData();
   }
@@ -36,6 +50,9 @@
     const failed = results.find(result => result.error);
     if (failed) { toast(errorMessage(failed.error)); setConnection(false, 'Sync problem'); return; }
     [state.cast, state.types, state.sessions, state.records] = results.map(result => result.data || []);
+    const adminResult = await client.rpc('is_callboard_roster_admin');
+    state.isRosterAdmin = !adminResult.error && adminResult.data === true;
+    if (adminResult.error) toast(errorMessage(adminResult.error));
     setConnection(true, 'Connected securely'); renderAll();
   }
   function renderAll() { renderTypes(); renderAttendance(); renderRoster(); renderHistory(); renderOverview(); }
@@ -60,7 +77,9 @@
     });
   }
   function renderRoster() {
-    $('#cast-list').innerHTML = state.cast.length ? state.cast.map(actor => `<div class="cast-row"><div class="cast-main"><span class="avatar">${escapeHtml(actor.name.trim().split(/\s+/).map(p => p[0]).slice(0,2).join('').toUpperCase())}</span><span><strong>${escapeHtml(actor.name)}</strong><small>${escapeHtml(actor.characters || 'Character not set')}</small></span></div><span><button class="remove-actor edit-actor" data-id="${actor.id}">Edit</button><button class="remove-actor delete-actor" data-id="${actor.id}">Remove</button></span></div>`).join('') : '<div class="empty-state">No actors yet. Add your first cast member above.</div>';
+    $('#roster-form').classList.toggle('hidden', !state.isRosterAdmin);
+    $('#roster-admin-note').classList.toggle('hidden', state.isRosterAdmin);
+    $('#cast-list').innerHTML = state.cast.length ? state.cast.map(actor => `<div class="cast-row"><div class="cast-main"><span class="avatar">${escapeHtml(actor.name.trim().split(/\s+/).map(p => p[0]).slice(0,2).join('').toUpperCase())}</span><span><strong>${escapeHtml(actor.name)}</strong><small>${escapeHtml(actor.characters || 'Character not set')}</small></span></div>${state.isRosterAdmin ? `<span><button class="remove-actor edit-actor" data-id="${actor.id}">Edit</button><button class="remove-actor delete-actor" data-id="${actor.id}">Remove</button></span>` : ''}</div>`).join('') : '<div class="empty-state">The cast roster is empty. Ask the production administrator to add cast members.</div>';
     $$('.edit-actor').forEach(button => button.addEventListener('click', async () => {
       const actor = state.cast.find(item => item.id === button.dataset.id); if (!actor) return;
       const name = prompt('Actor name', actor.name); if (name === null) return;
@@ -163,15 +182,56 @@
     const bundle = { exportedAt: new Date().toISOString(), cast: state.cast, rehearsalTypes: state.types, sessions: state.sessions, attendanceRecords: state.records.map(({ cast_members, ...record }) => record) };
     const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' }); const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = `callboard-backup-${localDate()}.json`; link.click(); URL.revokeObjectURL(url); toast('Backup downloaded to this device.');
   });
+  async function continueAuth() {
+    const { data: userData, error: userError } = await client.auth.getUser();
+    if (userError || !userData.user) { showAuth(userError ? errorMessage(userError) : 'Please sign in again.'); return; }
+    state.user = userData.user;
+    const { data: allowed, error: accessError } = await client.from('authorized_users').select('email').maybeSingle();
+    if (accessError || !allowed) {
+      await client.auth.signOut(); state.user = null;
+      showAuth('This account is not on the authorized production list. Ask the production manager for an invitation.'); return;
+    }
+    const { data: profile, error: profileError } = await client.from('callboard_profiles').select('user_id,username').maybeSingle();
+    if (profileError) { showAuth(`Account setup needs a database update: ${errorMessage(profileError)}`); return; }
+    state.profile = profile;
+    if (!profile) { showSetup(); return; }
+    if (authFlow === 'recovery') { showRecovery(); return; }
+    authFlow = ''; await showApp();
+  }
   $('#login-form').addEventListener('submit', async event => {
     event.preventDefault(); if (!client) { showAuth('Setup is incomplete. Add your Supabase URL and publishable key to config.js, then redeploy.'); return; }
     const form = new FormData(event.currentTarget); $('#auth-message').textContent = 'Signing in…';
     const { error } = await client.auth.signInWithPassword({ email: form.get('email').trim(), password: form.get('password') });
     if (error) { $('#auth-message').textContent = error.message; return; }
-    const { data } = await client.auth.getUser(); state.user = data.user;
-    const { data: allowed, error: accessError } = await client.from('authorized_users').select('email').maybeSingle();
-    if (accessError || !allowed) { await client.auth.signOut(); showAuth('This account is not on the authorized production list. Ask your production manager for an invitation.'); return; }
+    await continueAuth();
+  });
+  $('#setup-form').addEventListener('submit', async event => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget), username = String(form.get('username')).trim();
+    const password = String(form.get('password')), confirmation = String(form.get('password-confirm'));
+    if (!/^[A-Za-z0-9_]{3,24}$/.test(username)) { $('#setup-message').textContent = 'Use 3–24 letters, numbers, or underscores for your username.'; return; }
+    if (password.length < 8) { $('#setup-message').textContent = 'Choose a password with at least 8 characters.'; return; }
+    if (password !== confirmation) { $('#setup-message').textContent = 'The passwords do not match.'; return; }
+    $('#setup-message').textContent = 'Saving your account…';
+    const { data: userData, error: userError } = await client.auth.getUser();
+    if (userError || !userData.user) { showAuth('Your invitation session expired. Ask the production manager to send a new invitation.'); return; }
+    const { error: passwordError } = await client.auth.updateUser({ password });
+    if (passwordError) { $('#setup-message').textContent = errorMessage(passwordError); return; }
+    const { error: profileError } = await client.from('callboard_profiles').upsert({ user_id: userData.user.id, username }, { onConflict: 'user_id' });
+    if (profileError) {
+      $('#setup-message').textContent = profileError.code === '23505' ? 'That username is already in use. Please choose another.' : errorMessage(profileError); return;
+    }
+    state.user = userData.user; state.profile = { user_id: userData.user.id, username }; authFlow = '';
     await showApp();
+  });
+  $('#recovery-form').addEventListener('submit', async event => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget), password = String(form.get('password'));
+    if (password !== String(form.get('password-confirm'))) { $('#recovery-message').textContent = 'The passwords do not match.'; return; }
+    $('#recovery-message').textContent = 'Updating password…';
+    const { error } = await client.auth.updateUser({ password });
+    if (error) { $('#recovery-message').textContent = errorMessage(error); return; }
+    authFlow = ''; await continueAuth();
   });
   $('#forgot-password').addEventListener('click', async () => {
     if (!client) return showAuth('Setup is incomplete. Configure the Supabase project first.');
@@ -182,6 +242,6 @@
   $('#signout').addEventListener('click', async () => { await client.auth.signOut(); showAuth(); });
   window.addEventListener('online', () => { if (state.user) loadData(); });
   if (!client) showAuth('Add your Supabase project settings to config.js to connect your private production workspace.');
-  else client.auth.getSession().then(async ({ data }) => { if (data.session) { state.user = data.session.user; await showApp(); } else showAuth(); });
+  else client.auth.getSession().then(async ({ data }) => { if (data.session) await continueAuth(); else showAuth(authFlow === 'invite' ? 'Open the invitation link from your email on this device, then choose your username and password.' : ''); });
   if ('serviceWorker' in navigator && window.location.protocol.startsWith('http')) navigator.serviceWorker.register('./sw.js').catch(() => {});
 })();

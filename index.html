@@ -32,6 +32,21 @@
           <button id="forgot-password" class="text-button" type="button">Forgot password?</button>
           <p id="auth-message" class="form-message" aria-live="polite"></p>
         </form>
+        <form id="setup-form" class="card login-card hidden">
+          <p class="eyebrow">INVITATION ACCEPTED</p><h2>Set up your account</h2><p class="muted">Choose the username shown as the attendance taker, and create your password.</p>
+          <label>Username<input id="new-username" name="username" type="text" required minlength="3" maxlength="24" pattern="[A-Za-z0-9_]{3,24}" autocomplete="username" placeholder="Example: AlexStage"></label>
+          <label>Password<input name="password" type="password" required minlength="8" autocomplete="new-password" placeholder="At least 8 characters"></label>
+          <label>Confirm password<input name="password-confirm" type="password" required minlength="8" autocomplete="new-password" placeholder="Enter it again"></label>
+          <button class="primary full" type="submit">Save account <span>→</span></button>
+          <p id="setup-message" class="form-message" aria-live="polite"></p>
+        </form>
+        <form id="recovery-form" class="card login-card hidden">
+          <p class="eyebrow">PASSWORD RESET</p><h2>Choose a new password</h2><p class="muted">Use at least 8 characters.</p>
+          <label>New password<input name="password" type="password" required minlength="8" autocomplete="new-password"></label>
+          <label>Confirm new password<input name="password-confirm" type="password" required minlength="8" autocomplete="new-password"></label>
+          <button class="primary full" type="submit">Update password <span>→</span></button>
+          <p id="recovery-message" class="form-message" aria-live="polite"></p>
+        </form>
       </section>
 
       <section id="app-view" class="hidden">
