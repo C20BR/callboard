@@ -29,6 +29,7 @@ on conflict (name) do nothing;
 create table if not exists public.rehearsal_sessions (
   id uuid primary key default gen_random_uuid(),
   rehearsal_date date not null,
+  rehearsal_time time,
   rehearsal_type text not null,
   taker text not null check (length(trim(taker)) > 0),
   created_at timestamptz not null default now(),
@@ -52,15 +53,15 @@ create or replace function public.is_callboard_user()
 returns boolean language sql stable security definer set search_path = public
 as $$ select exists (select 1 from public.authorized_users au where au.email = lower(coalesce(auth.jwt()->>'email', ''))) $$;
 
-create or replace function public.save_rehearsal(p_date date, p_type text, p_taker text, p_records jsonb)
+create or replace function public.save_rehearsal(p_date date, p_type text, p_taker text, p_time time, p_records jsonb)
 returns uuid language plpgsql security invoker set search_path = public
 as $$
 declare v_session uuid;
 begin
   if not public.is_callboard_user() then raise exception 'This account is not authorized for Callboard.'; end if;
   if p_date is null or length(trim(p_type)) = 0 or length(trim(p_taker)) = 0 then raise exception 'Date, rehearsal type, and attendance taker are required.'; end if;
-  insert into public.rehearsal_sessions (rehearsal_date, rehearsal_type, taker)
-  values (p_date, trim(p_type), trim(p_taker)) returning id into v_session;
+  insert into public.rehearsal_sessions (rehearsal_date, rehearsal_time, rehearsal_type, taker)
+  values (p_date, p_time, trim(p_type), trim(p_taker)) returning id into v_session;
   insert into public.attendance_records (session_id, cast_member_id, status, notes)
   select v_session, (item->>'cast_member_id')::uuid, item->>'status', coalesce(item->>'notes', '')
   from jsonb_array_elements(p_records) item;
@@ -93,11 +94,11 @@ grant select, insert on public.rehearsal_types to authenticated;
 grant select, insert, delete on public.rehearsal_sessions to authenticated;
 grant select, insert, update, delete on public.attendance_records to authenticated;
 grant execute on function public.is_callboard_user() to authenticated;
-grant execute on function public.save_rehearsal(date, text, text, jsonb) to authenticated;
+grant execute on function public.save_rehearsal(date, text, text, time, jsonb) to authenticated;
 revoke all on function public.is_callboard_user() from public, anon;
-revoke all on function public.save_rehearsal(date, text, text, jsonb) from public, anon;
+revoke all on function public.save_rehearsal(date, text, text, time, jsonb) from public, anon;
 grant execute on function public.is_callboard_user() to authenticated;
-grant execute on function public.save_rehearsal(date, text, text, jsonb) to authenticated;
+grant execute on function public.save_rehearsal(date, text, text, time, jsonb) to authenticated;
 
 -- Add authorized users manually from the SQL Editor, after inviting them:
 -- insert into public.authorized_users (email) values ('person@example.com');
