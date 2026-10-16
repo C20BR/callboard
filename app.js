@@ -6,7 +6,7 @@
   const client = configured && window.supabase ? window.supabase.createClient(config.supabaseUrl, config.supabaseAnonKey) : null;
   const $ = (selector, root = document) => root.querySelector(selector);
   const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
-  const state = { user: null, profile: null, isRosterAdmin: false, cast: [], types: [], sessions: [], records: [], statuses: new Map(), notes: new Map(), attendanceMode: 'all', attendanceTags: new Set(), attendancePersonIds: new Set(), attendanceNameSearch: '' };
+  const state = { user: null, profile: null, isRosterAdmin: false, isTeacher: false, teacherEmails: [], calendarEmbedUrl: '', cast: [], types: [], sessions: [], records: [], statuses: new Map(), notes: new Map(), attendanceMode: 'all', attendanceTags: new Set(), attendancePersonIds: new Set(), attendanceNameSearch: '' };
   const attendanceStatusValues = ['Here', 'Late', 'Absent'];
   const historyStatusValues = [...attendanceStatusValues, 'Exempt'];
   let toastTimer;
@@ -46,27 +46,76 @@
       client.from('cast_members').select('*').order('name'),
       client.from('rehearsal_types').select('*').order('is_builtin', { ascending: false }).order('name'),
       client.from('rehearsal_sessions').select('*').order('rehearsal_date', { ascending: false }).order('created_at', { ascending: false }),
-      client.from('attendance_records').select('*, cast_members(id,name,characters)')
+      client.from('attendance_records').select('*, cast_members(id,name,characters)'),
+      client.from('callboard_settings').select('google_calendar_embed_url').eq('id', 'global').maybeSingle()
     ]);
     const failedIndex = results.findIndex(result => result.error);
     if (failedIndex !== -1) {
-      const sections = ['cast roster', 'rehearsal types', 'rehearsal history', 'attendance details'];
+      const sections = ['cast roster', 'rehearsal types', 'rehearsal history', 'attendance details', 'calendar settings'];
       const message = `Could not load ${sections[failedIndex]}: ${errorMessage(results[failedIndex].error)}`;
       $('#sync-message').textContent = `${message} A saved rehearsal may be in Supabase even if it is not visible here yet.`;
       $('#sync-message').classList.remove('hidden'); toast(message); setConnection(false, 'Sync problem'); return false;
     }
     [state.cast, state.types, state.sessions, state.records] = results.map(result => result.data || []);
-    const adminResult = await client.rpc('is_callboard_roster_admin');
+    state.calendarEmbedUrl = results[4].data?.google_calendar_embed_url || '';
+    const [adminResult, teacherResult] = await Promise.all([
+      client.rpc('is_callboard_roster_admin'),
+      client.rpc('is_callboard_teacher')
+    ]);
     state.isRosterAdmin = !adminResult.error && adminResult.data === true;
+    state.isTeacher = !teacherResult.error && teacherResult.data === true;
+    state.teacherEmails = [];
+    if (state.isRosterAdmin) {
+      const teacherList = await client.from('callboard_teachers').select('email').order('email');
+      if (teacherList.error) toast(errorMessage(teacherList.error));
+      else state.teacherEmails = teacherList.data || [];
+    }
     if (adminResult.error) toast(errorMessage(adminResult.error));
+    if (teacherResult.error) toast(errorMessage(teacherResult.error));
     $('#sync-message').classList.add('hidden');
     setConnection(true, 'Connected securely'); renderAll(); return true;
   }
-  function renderAll() { renderTypes(); renderAttendance(); renderRoster(); renderHistory(); renderOverview(); renderAdmin(); }
+  function renderAll() { renderTypes(); renderLocation(); renderAttendance(); renderRoster(); renderHistory(); renderOverview(); renderCalendar(); renderAdmin(); }
   function renderTypes() {
     const select = $('#session-type'), current = select.value;
     select.innerHTML = state.types.map(type => `<option value="${escapeHtml(type.name)}">${escapeHtml(type.name)}</option>`).join('');
     if (current && state.types.some(type => type.name === current)) select.value = current;
+    $('#custom-type').classList.toggle('hidden', !(state.isRosterAdmin || state.isTeacher));
+    $('#session-location').readOnly = !(state.isRosterAdmin || state.isTeacher);
+    $('#location-permission-note').classList.toggle('hidden', state.isRosterAdmin || state.isTeacher);
+    $('#location-manager-note').classList.toggle('hidden', !canManageRehearsals());
+  }
+  function renderLocation(reset = false) {
+    const field = $('#session-location'), typeName = $('#session-type').value;
+    if (!field) return;
+    const type = state.types.find(item => item.name === typeName);
+    const defaultLocation = type?.default_location || '';
+    if (reset || !field.value) field.value = defaultLocation;
+    field.readOnly = !(state.isRosterAdmin || state.isTeacher);
+    $('#location-permission-note').classList.toggle('hidden', state.isRosterAdmin || state.isTeacher);
+    $('#location-manager-note').classList.toggle('hidden', !canManageRehearsals());
+    $('#save-location-default').classList.toggle('hidden', !canManageRehearsals());
+  }
+  function normalizeGoogleCalendarUrl(value) {
+    const text = String(value ?? '').trim();
+    const source = text.match(/src\s*=\s*(["'])(.*?)\1/i)?.[2] || text;
+    const unescaped = source.replace(/&amp;/g, '&');
+    try {
+      const url = new URL(unescaped);
+      return url.protocol === 'https:' && url.hostname === 'calendar.google.com' && url.pathname === '/calendar/embed' ? url.href : '';
+    } catch { return ''; }
+  }
+  function renderCalendar() {
+    const frame = $('#google-calendar-frame'), open = $('#open-google-calendar'), notice = $('#calendar-notice');
+    const url = normalizeGoogleCalendarUrl(state.calendarEmbedUrl);
+    if (url) {
+      if (frame.getAttribute('src') !== url) frame.src = url;
+      frame.classList.remove('hidden'); open.href = url; open.classList.remove('hidden');
+      notice.textContent = 'Use this calendar to check the call before taking attendance. Callboard does not edit or copy Google events. Google controls calendar access: a private calendar requires each viewer to have Google access; a public calendar can be visible to anyone.';
+    } else {
+      frame.removeAttribute('src'); frame.classList.add('hidden'); open.classList.add('hidden');
+      notice.textContent = state.isRosterAdmin ? 'Connect a Google Calendar from the Admin tab. Paste only the calendar embed URL or the full iframe code.' : 'The production manager has not connected a Google Calendar yet.';
+    }
   }
   function escapeHtml(value) { return String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]); }
   function normalizeTags(value) {
@@ -169,6 +218,7 @@
     }));
   }
   function recordsFor(sessionId) { return state.records.filter(record => record.session_id === sessionId); }
+  function canManageRehearsals() { return state.isRosterAdmin || state.isTeacher; }
   function renderHistory() {
     const list = $('#history-list');
     if (!state.sessions.length) { list.innerHTML = '<article class="card empty-state">No rehearsals saved yet. Your session history will appear here.</article>'; return; }
@@ -176,7 +226,7 @@
       const records = recordsFor(session.id);
       const date = new Date(`${session.rehearsal_date}T12:00:00`).toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' });
       const time = formatTime(session.rehearsal_time);
-      return `<article class="card history-session"><div class="history-session-head"><div><h3>${escapeHtml(session.rehearsal_type)} <span class="accent">·</span> ${escapeHtml(date)}${time ? ` <span class="session-time-label">· ${escapeHtml(time)}</span>` : ''}</h3><p>Called by ${escapeHtml(session.taker)} · ${records.length} cast members recorded</p></div><span class="session-count">Edit records &nbsp;⌄</span></div><div class="history-details hidden">${records.map(record => { const recordStatuses = record.status === 'Exempt' ? historyStatusValues : attendanceStatusValues; return `<div class="history-row" data-record="${record.id}"><span class="history-actor"><strong>${escapeHtml(record.cast_members?.name || 'Former cast member')}</strong><small>${escapeHtml(record.cast_members?.characters || '')}</small></span><select aria-label="Attendance status">${recordStatuses.map(status => `<option ${record.status === status ? 'selected' : ''}>${status}</option>`).join('')}</select><input type="text" maxlength="500" aria-label="Attendance note" placeholder="Note for late arrival or absence" value="${escapeHtml(record.notes || '')}" ${['Late','Absent'].includes(record.status) ? '' : 'disabled'}></div>`; }).join('')}<div class="save-row">${state.isRosterAdmin ? `<button class="remove-actor delete-session" data-id="${session.id}">Delete this rehearsal…</button>` : '<span></span>'}<span class="muted">Changes sync to overview totals as you save each row.</span></div></div></article>`;
+      return `<article class="card history-session"><div class="history-session-head"><div><h3>${escapeHtml(session.rehearsal_type)} <span class="accent">·</span> ${escapeHtml(date)}${time ? ` <span class="session-time-label">· ${escapeHtml(time)}</span>` : ''}</h3><p>Called by ${escapeHtml(session.taker)} · ${records.length} cast members recorded · Location: ${escapeHtml(session.location || 'Not set')}</p></div><span class="session-count">Edit records &nbsp;⌄</span></div><div class="history-details hidden">${records.map(record => { const recordStatuses = record.status === 'Exempt' ? historyStatusValues : attendanceStatusValues; return `<div class="history-row" data-record="${record.id}"><span class="history-actor"><strong>${escapeHtml(record.cast_members?.name || 'Former cast member')}</strong><small>${escapeHtml(record.cast_members?.characters || '')}</small></span><select aria-label="Attendance status">${recordStatuses.map(status => `<option ${record.status === status ? 'selected' : ''}>${status}</option>`).join('')}</select><input type="text" maxlength="500" aria-label="Attendance note" placeholder="Note for late arrival or absence" value="${escapeHtml(record.notes || '')}" ${['Late','Absent'].includes(record.status) ? '' : 'disabled'}></div>`; }).join('')}${canManageRehearsals() ? `<div class="history-location-row"><label>Location<input type="text" maxlength="160" data-session-location="${session.id}" value="${escapeHtml(session.location || '')}" placeholder="Add rehearsal location"></label><button type="button" class="secondary save-session-location" data-id="${session.id}">Save location</button></div>` : ''}<div class="save-row">${canManageRehearsals() ? `<button class="remove-actor delete-session" data-id="${session.id}">Delete this rehearsal…</button>` : '<span></span>'}<span class="muted">Changes sync to overview totals as you save each row.</span></div></div></article>`;
     }).join('');
     $$('.history-session-head').forEach(head => head.addEventListener('click', () => $('.history-details', head.parentElement).classList.toggle('hidden')));
     $$('.history-row').forEach(row => {
@@ -184,7 +234,14 @@
       select.addEventListener('change', async () => { input.disabled = !['Late', 'Absent'].includes(select.value); if (input.disabled) input.value = ''; await updateRecord(row, select, input); });
       input.addEventListener('change', async () => updateRecord(row, select, input));
     });
+    $$('.save-session-location').forEach(button => button.addEventListener('click', async () => {
+      if (!canManageRehearsals()) return;
+      const input = $(`[data-session-location="${button.dataset.id}"]`);
+      const { error } = await client.from('rehearsal_sessions').update({ location: input.value.trim() }).eq('id', button.dataset.id);
+      if (error) toast(errorMessage(error)); else { toast('Rehearsal location saved.'); await loadData(); }
+    }));
     $$('.delete-session').forEach(button => button.addEventListener('click', async () => {
+      if (!canManageRehearsals()) return;
       const session = state.sessions.find(item => item.id === button.dataset.id); if (!session) return;
       if (!confirm(`Permanently delete the ${session.rehearsal_type} rehearsal on ${session.rehearsal_date} and all its attendance records? This cannot be undone.`)) return;
       const { error } = await client.from('rehearsal_sessions').delete().eq('id', session.id);
@@ -224,6 +281,16 @@
   function renderAdmin() {
     const tab = $('.tab[data-page="admin"]'); tab.classList.toggle('hidden', !state.isRosterAdmin);
     if (!state.isRosterAdmin) return;
+    $('#google-calendar-url').value = state.calendarEmbedUrl;
+    $('#remove-calendar-button').disabled = !state.calendarEmbedUrl;
+    $('#teacher-list').innerHTML = state.teacherEmails.length ? state.teacherEmails.map(({ email }) => `<div class="teacher-role-row"><span>${escapeHtml(email)}</span><button type="button" class="remove-actor remove-teacher" data-email="${escapeHtml(email)}">Remove teacher role</button></div>`).join('') : '<p class="muted">No teachers assigned yet. Everyone else remains a stage manager.</p>';
+    $$('.remove-teacher').forEach(button => button.addEventListener('click', async () => {
+      if (!state.isRosterAdmin) return;
+      const email = button.dataset.email;
+      if (!confirm(`Remove teacher privileges from ${email}? They will become a stage manager.`)) return;
+      const { error } = await client.from('callboard_teachers').delete().eq('email', email);
+      if (error) toast(errorMessage(error)); else { toast('Teacher role removed.'); await loadData(); }
+    }));
     $('#admin-history-count').textContent = String(state.sessions.length);
     $('#admin-cast-count').textContent = String(state.cast.length);
     $('#clear-history-button').disabled = state.sessions.length === 0;
@@ -261,6 +328,15 @@
     $('#duplicate-hint').textContent = existing.length ? `${existing.length} rehearsal${existing.length > 1 ? 's' : ''} may match this date and time. Review history before saving another.` : '';
   }
   $('#session-type').addEventListener('change', refreshDuplicateHint);
+  $('#session-type').addEventListener('change', () => renderLocation(true));
+  $('#save-location-default').addEventListener('click', async () => {
+    if (!canManageRehearsals()) return;
+    const name = $('#session-type').value;
+    if (!name) { toast('Choose a rehearsal type first.'); return; }
+    const { error } = await client.from('rehearsal_types').update({ default_location: $('#session-location').value.trim() }).eq('name', name);
+    if (error) toast(errorMessage(error));
+    else { toast(`Default location saved for ${name}.`); await loadData(); }
+  });
   $('#session-date').addEventListener('change', refreshDuplicateHint);
   $('#multiple-practices').addEventListener('change', () => {
     const enabled = $('#multiple-practices').checked;
@@ -271,9 +347,10 @@
   });
   $('#session-time').addEventListener('input', refreshDuplicateHint);
   $('#add-type').addEventListener('click', async () => {
+    if (!canManageRehearsals()) return;
     const input = $('#new-type'), name = input.value.trim(); if (!name) { input.focus(); return; }
     const { error } = await client.from('rehearsal_types').insert({ name, is_builtin: false });
-    if (error) toast(error.code === '23505' ? 'That rehearsal type already exists.' : errorMessage(error)); else { input.value = ''; toast('Custom rehearsal type added.'); await loadData(); $('#session-type').value = name; }
+    if (error) toast(error.code === '23505' ? 'That rehearsal type already exists.' : errorMessage(error)); else { input.value = ''; toast('Custom rehearsal type added.'); await loadData(); $('#session-type').value = name; renderLocation(true); }
   });
   $('#roster-form').addEventListener('submit', async event => {
     event.preventDefault(); const name = $('#actor-name').value.trim(), characters = $('#actor-characters').value.trim(), tags = normalizeTags($('#actor-tags').value); if (!name) return;
@@ -285,6 +362,7 @@
     const date = $('#session-date').value, type = $('#session-type').value, taker = $('#session-taker').value.trim();
     if (!date || !type || !taker) { toast('Enter a date, rehearsal type, and attendance taker.'); return; }
     const time = $('#multiple-practices').checked ? $('#session-time').value : null;
+    const location = $('#session-location').value.trim();
     if ($('#multiple-practices').checked && !time) { toast('Enter the start time to distinguish this practice.'); $('#session-time').focus(); return; }
     const duplicate = state.sessions.filter(session => session.rehearsal_date === date && (time && session.rehearsal_time ? session.rehearsal_time.slice(0, 5) === time : session.rehearsal_type === type));
     if (duplicate.length) {
@@ -293,14 +371,49 @@
     }
     const nonHere = attendanceCast.filter(actor => statusFor(actor.id) !== 'Here').length;
     const groupLabel = state.attendanceMode === 'tags' && state.attendanceTags.size ? ` matching ${[...state.attendanceTags].join(', ')}` : state.attendanceMode === 'people' ? ' selected by name' : '';
-    if (!confirm(`Save ${type} rehearsal on ${date}${time ? ` at ${formatTime(time)}` : ''} for ${attendanceCast.length} cast members${groupLabel}? ${nonHere} marked ${nonHere === 1 ? 'member is' : 'members are'} not Here. Cast outside this selection will not be included in this attendance record.`)) return;
+    if (!confirm(`Save ${type} rehearsal on ${date}${time ? ` at ${formatTime(time)}` : ''}${location ? ` at ${location}` : ''} for ${attendanceCast.length} cast members${groupLabel}? ${nonHere} marked ${nonHere === 1 ? 'member is' : 'members are'} not Here. Cast outside this selection will not be included in this attendance record.`)) return;
     const records = attendanceCast.map(actor => ({ cast_member_id: actor.id, status: statusFor(actor.id), notes: state.notes.get(actor.id) || '' }));
-    const { data: savedId, error } = await client.rpc('save_rehearsal', { p_date: date, p_type: type, p_taker: taker, p_time: time, p_records: records });
+    const { data: savedId, error } = await client.rpc('save_rehearsal', { p_date: date, p_type: type, p_taker: taker, p_time: time, p_records: records, p_location: location });
     if (error) { toast(errorMessage(error)); return; }
+    let typeLocationError = null;
+    if (canManageRehearsals()) {
+      const result = await client.from('rehearsal_types').update({ default_location: location }).eq('name', type);
+      typeLocationError = result.error;
+    }
     state.statuses.clear(); state.notes.clear(); $('#session-date').value = localDate(); $('#multiple-practices').checked = false; $('#multiple-practices').dispatchEvent(new Event('change'));
     const loaded = await loadData(); gotoPage('history');
-    if (loaded && state.sessions.some(session => session.id === savedId)) toast('Rehearsal saved and confirmed in history.');
+    if (typeLocationError) toast(`Rehearsal saved, but the default location could not be updated: ${errorMessage(typeLocationError)}`);
+    else if (loaded && state.sessions.some(session => session.id === savedId)) toast('Rehearsal saved and confirmed in history.');
     else toast('Supabase accepted the save, but Callboard could not reload it. Check the sync message before saving again.');
+  });
+  $('#teacher-form').addEventListener('submit', async event => {
+    event.preventDefault();
+    if (!state.isRosterAdmin) return;
+    const email = $('#teacher-email').value.trim().toLowerCase();
+    if (!email) return;
+    const { error } = await client.from('callboard_teachers').insert({ email });
+    if (error) {
+      toast(error.code === '23503' ? 'Invite and add this person to the authorized-user list before assigning the teacher role.' : error.code === '23505' ? 'That account is already a teacher.' : errorMessage(error));
+    } else {
+      $('#teacher-form').reset(); toast('Teacher role assigned.'); await loadData();
+    }
+  });
+  $('#calendar-form').addEventListener('submit', async event => {
+    event.preventDefault();
+    if (!state.isRosterAdmin) return;
+    const entered = $('#google-calendar-url').value.trim();
+    const embedUrl = normalizeGoogleCalendarUrl(entered);
+    if (entered && !embedUrl) {
+      toast('Paste the Google Calendar embed URL, or its iframe code. It must come from calendar.google.com.'); return;
+    }
+    const { error } = await client.from('callboard_settings').update({ google_calendar_embed_url: embedUrl }).eq('id', 'global');
+    if (error) toast(errorMessage(error));
+    else { toast(embedUrl ? 'Google Calendar connected.' : 'Google Calendar removed.'); await loadData(); gotoPage('calendar'); }
+  });
+  $('#remove-calendar-button').addEventListener('click', async () => {
+    if (!state.isRosterAdmin || !state.calendarEmbedUrl) return;
+    const { error } = await client.from('callboard_settings').update({ google_calendar_embed_url: '' }).eq('id', 'global');
+    if (error) toast(errorMessage(error)); else { toast('Google Calendar removed.'); await loadData(); }
   });
   $('#clear-history-button').addEventListener('click', async () => {
     if (!state.isRosterAdmin || !state.sessions.length) return;

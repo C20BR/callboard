@@ -14,7 +14,10 @@ A mobile-friendly attendance tracker for rehearsal teams. It runs as a static si
 - A switchable late-versus-absence or call-ins chart, cast summary, and JSON backup download.
 - Invite-only Supabase sign-in, user-chosen usernames and passwords, database Row Level Security, and an installable PWA shell.
 - The production administrator is the only account that can add, edit, or remove cast members. Every authorized member can take attendance; their username is recorded as the attendance taker.
-- An administrator-only tab can clear rehearsal history or, after history is cleared, clear the cast roster.
+- The production administrator can assign teacher roles to already-invited, authorized accounts. Everyone else is a stage manager by default. Teachers can delete individual rehearsals and change rehearsal locations, but cannot access the Admin tab, change the cast roster, assign roles, or clear all history.
+- Rehearsal locations are visible to the whole team. The production administrator and teachers can change a location; each rehearsal type remembers its latest default so stage managers see it when taking attendance.
+- An optional, read-only Google Calendar embed is visible to signed-in Callboard users. Google Calendar still controls its own sharing permissions; calendar events are not copied into attendance records.
+- An administrator-only tab can assign/remove teacher roles, clear rehearsal history, or, after history is cleared, clear the cast roster.
 
 Call-ins count one Here, Late, or Absent attendance record per person per rehearsal. The tag or name selection determines who has a record on each new attendance sheet; cast members outside the selection are left off that session. Name selection is temporary and does not edit roster tags. Older Exempt records remain in history and are excluded from call-in totals. There is no separate expected-rehearsal schedule, so an actor without a record in a session is not counted.
 
@@ -26,16 +29,17 @@ Call-ins count one Here, Late, or Absent attendance record per person per rehear
 4. In the SQL Editor, run [`supabase/migration_admin_tools_and_times.sql`](supabase/migration_admin_tools_and_times.sql). This adds the optional time field and admin-only bulk actions; old rehearsals keep their dates and records.
 5. In the SQL Editor, run [`supabase/migration_security_advisor.sql`](supabase/migration_security_advisor.sql). This changes the authorization helpers to run with caller permissions and restricts the admin-status lookup to the signed-in user's own email. It does not change rehearsal, attendance, or cast records.
 6. In the SQL Editor, run [`supabase/migration_roster_tags.sql`](supabase/migration_roster_tags.sql). It adds an empty tags field to each existing cast member without changing roster or attendance data.
-7. In **Authentication → Providers → Email**, disable public sign-ups. Keep email/password sign-in enabled.
-8. In **Authentication → URL Configuration**, set Site URL and add the GitHub Pages site URL to the allowed redirect URLs (including the site root).
-9. Invite each production team member under **Authentication → Users**. Add each invited email to `public.authorized_users` from the SQL Editor, in lowercase:
+7. In the SQL Editor, run [`supabase/migration_teacher_roles_and_locations.sql`](supabase/migration_teacher_roles_and_locations.sql). Existing accounts stay stage managers; it adds blank location fields and the calendar setting without changing attendance or assigning anyone elevated access.
+8. In **Authentication → Providers → Email**, disable public sign-ups. Keep email/password sign-in enabled.
+9. In **Authentication → URL Configuration**, set Site URL and add the GitHub Pages site URL to the allowed redirect URLs (including the site root).
+10. Invite each production team member under **Authentication → Users**. Add each invited email to `public.authorized_users` from the SQL Editor, in lowercase:
 
    ```sql
    insert into public.authorized_users (email) values ('person@example.com');
    ```
 
    The invited person opens the email link at Callboard and chooses a username and password. They must be on the allowlist before finishing setup. Only authorized emails can read production data. Authenticated accounts without an allowlist entry see no cast or attendance data. Do not grant team members SQL Editor or project-owner access unless they need database administration.
-10. Add only the production administrator's email to `public.callboard_roster_admins`, in lowercase. Run this in SQL Editor after inviting and allowlisting that person:
+11. Add only the production administrator's email to `public.callboard_roster_admins`, in lowercase. Run this in SQL Editor after inviting and allowlisting that person:
 
    ```sql
    insert into public.callboard_roster_admins (email)
@@ -43,7 +47,10 @@ Call-ins count one Here, Late, or Absent attendance record per person per rehear
    on conflict (email) do nothing;
    ```
 
-   Do not add other users to this table. Other authorized users can take attendance and see the shared roster but cannot change its cast members. The admin table is separate from the general authorized-user allowlist.
+   Do not add teachers to this table. Other authorized users can take attendance and see the shared roster but cannot change its cast members. The admin table is separate from the general authorized-user allowlist.
+
+12. After deployment, sign in as the production administrator and use **Admin → Teacher roles** to assign teacher access to each teacher's exact sign-in email. The email must already be invited and on the authorized-user allowlist. Remove the role there to return someone to stage-manager permissions.
+13. To connect a Google Calendar, open its settings on a computer, choose **Integrate calendar**, and copy the calendar's embed URL (the `src` address in the embed code). In Callboard, open **Admin → Google Calendar** and paste that URL. Set sharing in Google Calendar before connecting it: a private calendar requires each viewer to have Google access, while a public calendar may be visible to anyone. Callboard sign-in does not also sign the viewer in to Google. The embed is read-only; attendance takers check it for the call, then save attendance separately in Callboard.
 
 ## 2. Configure GitHub Pages
 
@@ -64,12 +71,12 @@ Open the deployed HTTPS Pages site in Safari, sign in, tap **Share**, then **Add
 
 Use **Export backup** while signed in to download a JSON backup to the current device. Store that file somewhere private. This is an export, not an automatic scheduled backup. Supabase project backups and recovery settings should also be configured for the production's retention needs.
 
-Only the production administrator can delete rehearsal history. The Admin tab can clear all history while keeping the roster, or clear the roster after history is empty. Each action requires confirmation and is permanent. Individual cast members with saved records cannot be removed, which protects historical links; edit their name/characters instead.
+Teachers and the production administrator can delete individual rehearsals, with a confirmation prompt; deleting a rehearsal also removes its attendance records. Only the production administrator can clear all history or clear the roster. Each bulk action requires confirmation and is permanent. Individual cast members with saved records cannot be removed, which protects historical links; edit their name/characters instead.
 
 ## Notes for maintainers
 
 - This is a static front end. It does not include secrets or a server-side API.
 - Authorization is enforced by PostgreSQL Row Level Security, not just by hiding the sign-in form.
-- `authorized_users` and `callboard_roster_admins` are maintained by the production administrator in the Supabase SQL Editor; the app does not provide a user-management screen.
+- `authorized_users` and `callboard_roster_admins` are maintained by the production administrator in the Supabase SQL Editor. Teacher roles are assigned in the app but remain protected by database policies.
 - The service worker caches only same-origin app files and never caches Supabase API responses.
 - Do not publish real attendance data, Supabase database passwords, or service-role keys in this repository.
