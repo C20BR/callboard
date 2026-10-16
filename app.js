@@ -47,15 +47,21 @@
       client.from('rehearsal_sessions').select('*').order('rehearsal_date', { ascending: false }).order('created_at', { ascending: false }),
       client.from('attendance_records').select('*, cast_members(id,name,characters)')
     ]);
-    const failed = results.find(result => result.error);
-    if (failed) { toast(errorMessage(failed.error)); setConnection(false, 'Sync problem'); return; }
+    const failedIndex = results.findIndex(result => result.error);
+    if (failedIndex !== -1) {
+      const sections = ['cast roster', 'rehearsal types', 'rehearsal history', 'attendance details'];
+      const message = `Could not load ${sections[failedIndex]}: ${errorMessage(results[failedIndex].error)}`;
+      $('#sync-message').textContent = `${message} A saved rehearsal may be in Supabase even if it is not visible here yet.`;
+      $('#sync-message').classList.remove('hidden'); toast(message); setConnection(false, 'Sync problem'); return false;
+    }
     [state.cast, state.types, state.sessions, state.records] = results.map(result => result.data || []);
     const adminResult = await client.rpc('is_callboard_roster_admin');
     state.isRosterAdmin = !adminResult.error && adminResult.data === true;
     if (adminResult.error) toast(errorMessage(adminResult.error));
-    setConnection(true, 'Connected securely'); renderAll();
+    $('#sync-message').classList.add('hidden');
+    setConnection(true, 'Connected securely'); renderAll(); return true;
   }
-  function renderAll() { renderTypes(); renderAttendance(); renderRoster(); renderHistory(); renderOverview(); }
+  function renderAll() { renderTypes(); renderAttendance(); renderRoster(); renderHistory(); renderOverview(); renderAdmin(); }
   function renderTypes() {
     const select = $('#session-type'), current = select.value;
     select.innerHTML = state.types.map(type => `<option value="${escapeHtml(type.name)}">${escapeHtml(type.name)}</option>`).join('');
@@ -101,7 +107,8 @@
     list.innerHTML = state.sessions.map(session => {
       const records = recordsFor(session.id);
       const date = new Date(`${session.rehearsal_date}T12:00:00`).toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' });
-      return `<article class="card history-session"><div class="history-session-head"><div><h3>${escapeHtml(session.rehearsal_type)} <span class="accent">·</span> ${escapeHtml(date)}</h3><p>Called by ${escapeHtml(session.taker)} · ${records.length} cast members recorded</p></div><span class="session-count">Edit records &nbsp;⌄</span></div><div class="history-details hidden">${records.map(record => `<div class="history-row" data-record="${record.id}"><span class="history-actor"><strong>${escapeHtml(record.cast_members?.name || 'Former cast member')}</strong><small>${escapeHtml(record.cast_members?.characters || '')}</small></span><select aria-label="Attendance status">${statusValues.map(status => `<option ${record.status === status ? 'selected' : ''}>${status}</option>`).join('')}</select><input type="text" maxlength="500" aria-label="Attendance note" placeholder="Note for late arrival or absence" value="${escapeHtml(record.notes || '')}" ${['Late','Absent'].includes(record.status) ? '' : 'disabled'}></div>`).join('')}<div class="save-row"><button class="remove-actor delete-session" data-id="${session.id}">Delete this rehearsal…</button><span class="muted">Changes sync to overview totals as you save each row.</span></div></div></article>`;
+      const time = formatTime(session.rehearsal_time);
+      return `<article class="card history-session"><div class="history-session-head"><div><h3>${escapeHtml(session.rehearsal_type)} <span class="accent">·</span> ${escapeHtml(date)}${time ? ` <span class="session-time-label">· ${escapeHtml(time)}</span>` : ''}</h3><p>Called by ${escapeHtml(session.taker)} · ${records.length} cast members recorded</p></div><span class="session-count">Edit records &nbsp;⌄</span></div><div class="history-details hidden">${records.map(record => `<div class="history-row" data-record="${record.id}"><span class="history-actor"><strong>${escapeHtml(record.cast_members?.name || 'Former cast member')}</strong><small>${escapeHtml(record.cast_members?.characters || '')}</small></span><select aria-label="Attendance status">${statusValues.map(status => `<option ${record.status === status ? 'selected' : ''}>${status}</option>`).join('')}</select><input type="text" maxlength="500" aria-label="Attendance note" placeholder="Note for late arrival or absence" value="${escapeHtml(record.notes || '')}" ${['Late','Absent'].includes(record.status) ? '' : 'disabled'}></div>`).join('')}<div class="save-row">${state.isRosterAdmin ? `<button class="remove-actor delete-session" data-id="${session.id}">Delete this rehearsal…</button>` : '<span></span>'}<span class="muted">Changes sync to overview totals as you save each row.</span></div></div></article>`;
     }).join('');
     $$('.history-session-head').forEach(head => head.addEventListener('click', () => $('.history-details', head.parentElement).classList.toggle('hidden')));
     $$('.history-row').forEach(row => {
@@ -134,7 +141,17 @@
     $('#summary-body').innerHTML = state.cast.length ? state.cast.map(actor => `<tr><td>${escapeHtml(actor.name)}</td><td>${escapeHtml(actor.characters || '—')}</td><td>${lates.get(actor.id)}</td><td>${absents.get(actor.id)}</td><td>${calls.get(actor.id)}</td></tr>`).join('') : '<tr><td colspan="5" class="empty-state">Add your cast to see attendance totals.</td></tr>';
     const max = Math.max(1, ...[...lates.values(), ...absents.values()]);
     $('#chart').innerHTML = state.cast.length ? state.cast.map(actor => `<div class="bar-group" title="${escapeHtml(actor.name)} — ${lates.get(actor.id)} late, ${absents.get(actor.id)} absent"><div class="bar-pair"><span class="bar late" style="height:${Math.max(lates.get(actor.id) ? 4 : 0, lates.get(actor.id) / max * 100)}%"></span><span class="bar absent" style="height:${Math.max(absents.get(actor.id) ? 4 : 0, absents.get(actor.id) / max * 100)}%"></span></div><span class="bar-name">${escapeHtml(actor.name.split(' ')[0])}</span></div>`).join('') : '<div class="empty-state">Your late and absence chart will appear once you add cast members.</div>';
-    $('#recent-list').innerHTML = state.sessions.length ? state.sessions.slice(0, 4).map(session => `<div class="recent-item"><div><strong>${escapeHtml(session.rehearsal_type)}</strong><small>${escapeHtml(new Date(`${session.rehearsal_date}T12:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }))} · ${escapeHtml(session.taker)}</small></div><span class="recent-tag">${recordsFor(session.id).filter(record => record.status !== 'Exempt').length} called</span></div>`).join('') : '<div class="empty-state">No rehearsals saved yet.</div>';
+    $('#recent-list').innerHTML = state.sessions.length ? state.sessions.slice(0, 4).map(session => `<div class="recent-item"><div><strong>${escapeHtml(session.rehearsal_type)}</strong><small>${escapeHtml(new Date(`${session.rehearsal_date}T12:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }))}${session.rehearsal_time ? ` · ${escapeHtml(formatTime(session.rehearsal_time))}` : ''} · ${escapeHtml(session.taker)}</small></div><span class="recent-tag">${recordsFor(session.id).filter(record => record.status !== 'Exempt').length} called</span></div>`).join('') : '<div class="empty-state">No rehearsals saved yet.</div>';
+  }
+  function renderAdmin() {
+    const tab = $('.tab[data-page="admin"]'); tab.classList.toggle('hidden', !state.isRosterAdmin);
+    if (!state.isRosterAdmin) return;
+    $('#admin-history-count').textContent = String(state.sessions.length);
+    $('#admin-cast-count').textContent = String(state.cast.length);
+    $('#clear-history-button').disabled = state.sessions.length === 0;
+    const blocked = state.sessions.length > 0;
+    $('#clear-roster-button').disabled = blocked || state.cast.length === 0;
+    $('#clear-roster-hint').textContent = blocked ? 'Clear rehearsal history first so old attendance records remain consistent.' : '';
   }
   function gotoPage(name) {
     $$('.tab').forEach(tab => tab.classList.toggle('active', tab.dataset.page === name));
@@ -142,17 +159,38 @@
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
   function localDate() { const date = new Date(); return `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`; }
+  function formatTime(value) {
+    if (!value) return '';
+    const [hours, minutes] = value.slice(0, 5).split(':').map(Number);
+    const date = new Date(); date.setHours(hours, minutes, 0, 0);
+    return new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(date);
+  }
 
   $$('.tab').forEach(tab => tab.addEventListener('click', () => gotoPage(tab.dataset.page)));
   $$('[data-goto]').forEach(button => button.addEventListener('click', () => gotoPage(button.dataset.goto)));
   $$('.bulk-actions button').forEach(button => button.addEventListener('click', () => { state.cast.forEach(actor => { state.statuses.set(actor.id, button.dataset.bulk); if (!['Late', 'Absent'].includes(button.dataset.bulk)) state.notes.delete(actor.id); }); renderAttendance(); }));
   $('#today-button').addEventListener('click', () => { $('#session-date').value = localDate(); });
   $('#session-date').value = localDate();
-  $('#session-type').addEventListener('change', () => {
-    const existing = state.sessions.filter(session => session.rehearsal_date === $('#session-date').value && session.rehearsal_type === $('#session-type').value);
-    $('#duplicate-hint').textContent = existing.length ? `${existing.length} rehearsal${existing.length > 1 ? 's' : ''} already saved for this date and type. Review history before saving another.` : '';
+  function refreshDuplicateHint() {
+    const date = $('#session-date').value, type = $('#session-type').value;
+    const time = $('#multiple-practices').checked ? $('#session-time').value : '';
+    const existing = state.sessions.filter(session => {
+      if (session.rehearsal_date !== date) return false;
+      if (time && session.rehearsal_time) return session.rehearsal_time.slice(0, 5) === time;
+      return session.rehearsal_type === type;
+    });
+    $('#duplicate-hint').textContent = existing.length ? `${existing.length} rehearsal${existing.length > 1 ? 's' : ''} may match this date and time. Review history before saving another.` : '';
+  }
+  $('#session-type').addEventListener('change', refreshDuplicateHint);
+  $('#session-date').addEventListener('change', refreshDuplicateHint);
+  $('#multiple-practices').addEventListener('change', () => {
+    const enabled = $('#multiple-practices').checked;
+    $('#session-time-field').classList.toggle('hidden', !enabled);
+    $('#session-time').required = enabled;
+    if (!enabled) $('#session-time').value = '';
+    refreshDuplicateHint();
   });
-  $('#session-date').addEventListener('change', () => $('#session-type').dispatchEvent(new Event('change')));
+  $('#session-time').addEventListener('input', refreshDuplicateHint);
   $('#add-type').addEventListener('click', async () => {
     const input = $('#new-type'), name = input.value.trim(); if (!name) { input.focus(); return; }
     const { error } = await client.from('rehearsal_types').insert({ name, is_builtin: false });
@@ -167,16 +205,39 @@
     event.preventDefault(); if (!state.cast.length) { toast('Add cast members before saving a rehearsal.'); return; }
     const date = $('#session-date').value, type = $('#session-type').value, taker = $('#session-taker').value.trim();
     if (!date || !type || !taker) { toast('Enter a date, rehearsal type, and attendance taker.'); return; }
-    const duplicate = state.sessions.filter(session => session.rehearsal_date === date && session.rehearsal_type === type);
+    const time = $('#multiple-practices').checked ? $('#session-time').value : null;
+    if ($('#multiple-practices').checked && !time) { toast('Enter the start time to distinguish this practice.'); $('#session-time').focus(); return; }
+    const duplicate = state.sessions.filter(session => session.rehearsal_date === date && (time && session.rehearsal_time ? session.rehearsal_time.slice(0, 5) === time : session.rehearsal_type === type));
     if (duplicate.length) {
-      const titles = duplicate.map(session => `${session.rehearsal_date} · ${session.rehearsal_type} · ${session.taker}`).join('\n');
-      if (!confirm(`A rehearsal with this date and type is already saved. Review the existing session(s) first:\n\n${titles}\n\nSave another anyway?`)) { gotoPage('history'); return; }
+      const titles = duplicate.map(session => `${session.rehearsal_date}${session.rehearsal_time ? ` ${formatTime(session.rehearsal_time)}` : ''} · ${session.rehearsal_type} · ${session.taker}`).join('\n');
+      if (!confirm(`A rehearsal may already be saved for this date and time. Review the existing session(s) first:\n\n${titles}\n\nSave another anyway?`)) { gotoPage('history'); return; }
     }
     const nonHere = state.cast.filter(actor => statusFor(actor.id) !== 'Here').length;
-    if (!confirm(`Save ${type} rehearsal on ${date} for ${state.cast.length} cast members? ${nonHere} marked ${nonHere === 1 ? 'member is' : 'members are'} not Here. Exempt records will be excluded from call-in totals.`)) return;
+    if (!confirm(`Save ${type} rehearsal on ${date}${time ? ` at ${formatTime(time)}` : ''} for ${state.cast.length} cast members? ${nonHere} marked ${nonHere === 1 ? 'member is' : 'members are'} not Here. Exempt records will be excluded from call-in totals.`)) return;
     const records = state.cast.map(actor => ({ cast_member_id: actor.id, status: statusFor(actor.id), notes: state.notes.get(actor.id) || '' }));
-    const { error } = await client.rpc('save_rehearsal', { p_date: date, p_type: type, p_taker: taker, p_records: records });
-    if (error) toast(errorMessage(error)); else { toast('Rehearsal saved.'); state.statuses.clear(); state.notes.clear(); $('#session-date').value = localDate(); await loadData(); gotoPage('history'); }
+    const { data: savedId, error } = await client.rpc('save_rehearsal', { p_date: date, p_type: type, p_taker: taker, p_time: time, p_records: records });
+    if (error) { toast(errorMessage(error)); return; }
+    state.statuses.clear(); state.notes.clear(); $('#session-date').value = localDate(); $('#multiple-practices').checked = false; $('#multiple-practices').dispatchEvent(new Event('change'));
+    const loaded = await loadData(); gotoPage('history');
+    if (loaded && state.sessions.some(session => session.id === savedId)) toast('Rehearsal saved and confirmed in history.');
+    else toast('Supabase accepted the save, but Callboard could not reload it. Check the sync message before saving again.');
+  });
+  $('#clear-history-button').addEventListener('click', async () => {
+    if (!state.isRosterAdmin || !state.sessions.length) return;
+    const sessionCount = state.sessions.length, recordCount = state.records.length;
+    if (!confirm(`Permanently clear all ${sessionCount} rehearsals and ${recordCount} attendance records? The cast roster stays. This cannot be undone.`)) return;
+    const { data, error } = await client.rpc('clear_callboard_history');
+    if (error) { toast(errorMessage(error)); return; }
+    await loadData(); toast(`Cleared ${data} rehearsal${data === 1 ? '' : 's'} and their attendance records.`);
+  });
+  $('#clear-roster-button').addEventListener('click', async () => {
+    if (!state.isRosterAdmin || !state.cast.length) return;
+    if (state.sessions.length) { toast('Clear rehearsal history first to keep records consistent.'); return; }
+    const castCount = state.cast.length;
+    if (!confirm(`Permanently remove all ${castCount} cast members from the shared roster? This cannot be undone.`)) return;
+    const { data, error } = await client.rpc('clear_callboard_roster');
+    if (error) { toast(errorMessage(error)); return; }
+    await loadData(); toast(`Removed ${data} cast member${data === 1 ? '' : 's'}.`);
   });
   $('#export-button').addEventListener('click', () => {
     const bundle = { exportedAt: new Date().toISOString(), cast: state.cast, rehearsalTypes: state.types, sessions: state.sessions, attendanceRecords: state.records.map(({ cast_members, ...record }) => record) };

@@ -9,9 +9,11 @@ A mobile-friendly attendance tracker for rehearsal teams. It runs as a static si
 - Music, Full Cast, and Scene(s) built-in types, plus custom types.
 - Confirmed rehearsal saves, duplicate date/type review, attendance notes, and editable history.
 - Corrections update the underlying attendance record, so late, absence, and call-in totals stay synchronized.
+- An optional start-time checkbox distinguishes multiple practices on one date; the time appears in history and recent rehearsals.
 - A late-versus-absence chart, cast summary, and JSON backup download.
 - Invite-only Supabase sign-in, user-chosen usernames and passwords, database Row Level Security, and an installable PWA shell.
 - The production administrator is the only account that can add, edit, or remove cast members. Every authorized member can take attendance; their username is recorded as the attendance taker.
+- An administrator-only tab can clear rehearsal history or, after history is cleared, clear the cast roster.
 
 Call-ins follow the workbook: Here + Late + Absent are counted; Exempt is excluded. The app stores Exempt rows too, so each session retains every cast member's marked status. There is no separate expected-rehearsal schedule, so an actor not yet marked in a session is not counted.
 
@@ -20,16 +22,17 @@ Call-ins follow the workbook: Here + Late + Absent are counted; Exempt is exclud
 1. Create a Supabase project and keep its database password private.
 2. In the Supabase SQL Editor, run [`supabase/schema.sql`](supabase/schema.sql) once. If it reports that a policy already exists, do not rerun it; continue with the migration below.
 3. In the SQL Editor, run [`supabase/migration_accounts_and_roster_admin.sql`](supabase/migration_accounts_and_roster_admin.sql).
-4. In **Authentication → Providers → Email**, disable public sign-ups. Keep email/password sign-in enabled.
-5. In **Authentication → URL Configuration**, set Site URL and add the GitHub Pages site URL to the allowed redirect URLs (including the site root).
-6. Invite each production team member under **Authentication → Users**. Add each invited email to `public.authorized_users` from the SQL Editor, in lowercase:
+4. In the SQL Editor, run [`supabase/migration_admin_tools_and_times.sql`](supabase/migration_admin_tools_and_times.sql). This adds the optional time field and admin-only bulk actions; old rehearsals keep their dates and records.
+5. In **Authentication → Providers → Email**, disable public sign-ups. Keep email/password sign-in enabled.
+6. In **Authentication → URL Configuration**, set Site URL and add the GitHub Pages site URL to the allowed redirect URLs (including the site root).
+7. Invite each production team member under **Authentication → Users**. Add each invited email to `public.authorized_users` from the SQL Editor, in lowercase:
 
    ```sql
    insert into public.authorized_users (email) values ('person@example.com');
    ```
 
    The invited person opens the email link at Callboard and chooses a username and password. They must be on the allowlist before finishing setup. Only authorized emails can read production data. Authenticated accounts without an allowlist entry see no cast or attendance data. Do not grant team members SQL Editor or project-owner access unless they need database administration.
-7. Add only the production administrator's email to `public.callboard_roster_admins`, in lowercase. Run this in SQL Editor after inviting and allowlisting that person:
+8. Add only the production administrator's email to `public.callboard_roster_admins`, in lowercase. Run this in SQL Editor after inviting and allowlisting that person:
 
    ```sql
    insert into public.callboard_roster_admins (email)
@@ -58,7 +61,7 @@ Open the deployed HTTPS Pages site in Safari, sign in, tap **Share**, then **Add
 
 Use **Export backup** while signed in to download a JSON backup to the current device. Store that file somewhere private. This is an export, not an automatic scheduled backup. Supabase project backups and recovery settings should also be configured for the production's retention needs.
 
-The history page allows a rehearsal to be deleted only after an explicit confirmation. Deletion removes its attendance records. A cast member with saved records cannot be removed, which protects historical links; edit their name/characters instead.
+Only the production administrator can delete rehearsal history. The Admin tab can clear all history while keeping the roster, or clear the roster after history is empty. Each action requires confirmation and is permanent. Individual cast members with saved records cannot be removed, which protects historical links; edit their name/characters instead.
 
 ## Notes for maintainers
 
