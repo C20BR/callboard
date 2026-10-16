@@ -5,17 +5,18 @@ A mobile-friendly attendance tracker for rehearsal teams. It runs as a static si
 ## What is included
 
 - One shared cast roster; multiple characters are stored together on each actor.
-- Here, Late, Absent, and Exempt statuses, with bulk actions and date helper.
+- Here, Late, and Absent statuses, with bulk actions and a date helper.
+- Shared roster tags such as Ensemble, Soloist, and Main character. Attendance can be filtered to one or more tags; only the selected cast are saved for that rehearsal.
 - Music, Full Cast, and Scene(s) built-in types, plus custom types.
 - Confirmed rehearsal saves, duplicate date/type review, attendance notes, and editable history.
 - Corrections update the underlying attendance record, so late, absence, and call-in totals stay synchronized.
 - An optional start-time checkbox distinguishes multiple practices on one date; the time appears in history and recent rehearsals.
-- A late-versus-absence chart, cast summary, and JSON backup download.
+- A switchable late-versus-absence or call-ins chart, cast summary, and JSON backup download.
 - Invite-only Supabase sign-in, user-chosen usernames and passwords, database Row Level Security, and an installable PWA shell.
 - The production administrator is the only account that can add, edit, or remove cast members. Every authorized member can take attendance; their username is recorded as the attendance taker.
 - An administrator-only tab can clear rehearsal history or, after history is cleared, clear the cast roster.
 
-Call-ins follow the workbook: Here + Late + Absent are counted; Exempt is excluded. The app stores Exempt rows too, so each session retains every cast member's marked status. There is no separate expected-rehearsal schedule, so an actor not yet marked in a session is not counted.
+Call-ins count one Here, Late, or Absent attendance record per person per rehearsal. The tag filter determines who has a record on each new attendance sheet; cast members outside the selected groups are left off that session. Older Exempt records remain in history and are excluded from call-in totals. There is no separate expected-rehearsal schedule, so an actor without a record in a session is not counted.
 
 ## 1. Create the private database
 
@@ -24,16 +25,17 @@ Call-ins follow the workbook: Here + Late + Absent are counted; Exempt is exclud
 3. In the SQL Editor, run [`supabase/migration_accounts_and_roster_admin.sql`](supabase/migration_accounts_and_roster_admin.sql).
 4. In the SQL Editor, run [`supabase/migration_admin_tools_and_times.sql`](supabase/migration_admin_tools_and_times.sql). This adds the optional time field and admin-only bulk actions; old rehearsals keep their dates and records.
 5. In the SQL Editor, run [`supabase/migration_security_advisor.sql`](supabase/migration_security_advisor.sql). This changes the authorization helpers to run with caller permissions and restricts the admin-status lookup to the signed-in user's own email. It does not change rehearsal, attendance, or cast records.
-6. In **Authentication → Providers → Email**, disable public sign-ups. Keep email/password sign-in enabled.
-7. In **Authentication → URL Configuration**, set Site URL and add the GitHub Pages site URL to the allowed redirect URLs (including the site root).
-8. Invite each production team member under **Authentication → Users**. Add each invited email to `public.authorized_users` from the SQL Editor, in lowercase:
+6. In the SQL Editor, run [`supabase/migration_roster_tags.sql`](supabase/migration_roster_tags.sql). It adds an empty tags field to each existing cast member without changing roster or attendance data.
+7. In **Authentication → Providers → Email**, disable public sign-ups. Keep email/password sign-in enabled.
+8. In **Authentication → URL Configuration**, set Site URL and add the GitHub Pages site URL to the allowed redirect URLs (including the site root).
+9. Invite each production team member under **Authentication → Users**. Add each invited email to `public.authorized_users` from the SQL Editor, in lowercase:
 
    ```sql
    insert into public.authorized_users (email) values ('person@example.com');
    ```
 
    The invited person opens the email link at Callboard and chooses a username and password. They must be on the allowlist before finishing setup. Only authorized emails can read production data. Authenticated accounts without an allowlist entry see no cast or attendance data. Do not grant team members SQL Editor or project-owner access unless they need database administration.
-9. Add only the production administrator's email to `public.callboard_roster_admins`, in lowercase. Run this in SQL Editor after inviting and allowlisting that person:
+10. Add only the production administrator's email to `public.callboard_roster_admins`, in lowercase. Run this in SQL Editor after inviting and allowlisting that person:
 
    ```sql
    insert into public.callboard_roster_admins (email)

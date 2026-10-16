@@ -6,8 +6,9 @@
   const client = configured && window.supabase ? window.supabase.createClient(config.supabaseUrl, config.supabaseAnonKey) : null;
   const $ = (selector, root = document) => root.querySelector(selector);
   const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
-  const state = { user: null, profile: null, isRosterAdmin: false, cast: [], types: [], sessions: [], records: [], statuses: new Map(), notes: new Map() };
-  const statusValues = ['Here', 'Late', 'Absent', 'Exempt'];
+  const state = { user: null, profile: null, isRosterAdmin: false, cast: [], types: [], sessions: [], records: [], statuses: new Map(), notes: new Map(), attendanceTags: new Set() };
+  const attendanceStatusValues = ['Here', 'Late', 'Absent'];
+  const historyStatusValues = [...attendanceStatusValues, 'Exempt'];
   let toastTimer;
 
   function toast(message) {
@@ -68,14 +69,57 @@
     if (current && state.types.some(type => type.name === current)) select.value = current;
   }
   function escapeHtml(value) { return String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]); }
+  function normalizeTags(value) {
+    const values = Array.isArray(value) ? value : String(value ?? '').split(',');
+    const found = new Set();
+    return values.map(tag => String(tag).trim().replace(/\s+/g, ' ')).filter(tag => {
+      const key = tag.toLocaleLowerCase();
+      if (!tag || found.has(key)) return false;
+      found.add(key); return true;
+    });
+  }
+  function allRosterTags() {
+    const tags = new Map();
+    state.cast.flatMap(actor => normalizeTags(actor.tags)).forEach(tag => { if (!tags.has(tag.toLocaleLowerCase())) tags.set(tag.toLocaleLowerCase(), tag); });
+    return [...tags.values()].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+  }
+  function castForAttendance() {
+    if (!state.attendanceTags.size) return state.cast;
+    return state.cast.filter(actor => normalizeTags(actor.tags).some(tag => state.attendanceTags.has(tag.toLocaleLowerCase())));
+  }
+  function tagBadges(tags) {
+    const values = normalizeTags(tags);
+    return values.length ? `<span class="tag-badges">${values.map(tag => `<span class="tag-badge">${escapeHtml(tag)}</span>`).join('')}</span>` : '';
+  }
   function statusFor(id) { return state.statuses.get(id) || 'Here'; }
+  function renderAttendanceTagFilter() {
+    const tags = allRosterTags(), filter = $('#attendance-tag-filter');
+    const validKeys = new Set(tags.map(tag => tag.toLocaleLowerCase()));
+    state.attendanceTags = new Set([...state.attendanceTags].filter(tag => validKeys.has(tag)));
+    filter.innerHTML = `<div class="tag-filter-buttons"><button type="button" class="tag-filter-button ${state.attendanceTags.size ? '' : 'selected'}" data-tag-all aria-pressed="${!state.attendanceTags.size}">Everyone</button>${tags.map(tag => {
+      const key = tag.toLocaleLowerCase(), selected = state.attendanceTags.has(key);
+      return `<button type="button" class="tag-filter-button ${selected ? 'selected' : ''}" data-tag="${escapeHtml(key)}" aria-pressed="${selected}">${escapeHtml(tag)}</button>`;
+    }).join('')}</div><p class="attendance-filter-note">${tags.length ? 'Choose one or more tags; a person is included if they have any selected tag. People outside the selection will not be saved on this attendance sheet.' : 'Add tags in Cast roster to filter attendance by group.'}</p>`;
+    $('[data-tag-all]', filter).addEventListener('click', () => { state.attendanceTags.clear(); renderAttendance(); });
+    $$('[data-tag]', filter).forEach(button => button.addEventListener('click', () => {
+      const tag = button.dataset.tag;
+      if (state.attendanceTags.has(tag)) state.attendanceTags.delete(tag); else state.attendanceTags.add(tag);
+      renderAttendance();
+    }));
+    const included = castForAttendance();
+    $('#roster-count').textContent = String(included.length);
+    $('#attendance-filter-count').textContent = state.attendanceTags.size ? `${included.length} of ${state.cast.length} people included` : `${included.length} people included`;
+    $('#save-session').disabled = included.length === 0;
+  }
   function renderAttendance() {
-    $('#roster-count').textContent = String(state.cast.length);
+    renderAttendanceTagFilter();
     const list = $('#attendance-list');
     if (!state.cast.length) { list.innerHTML = '<div class="empty-state">Your cast roster is empty. Add actors in Cast roster to begin.</div>'; return; }
-    list.innerHTML = state.cast.map(actor => {
+    const included = castForAttendance();
+    if (!included.length) { list.innerHTML = '<div class="empty-state">No cast members have the selected tags. Choose another tag or select Everyone.</div>'; return; }
+    list.innerHTML = included.map(actor => {
       const status = statusFor(actor.id), initials = actor.name.trim().split(/\s+/).map(part => part[0]).slice(0, 2).join('').toUpperCase();
-      return `<div class="attendance-row" data-actor="${actor.id}"><div class="actor-info"><span class="avatar">${escapeHtml(initials)}</span><span><strong>${escapeHtml(actor.name)}</strong><small>${escapeHtml(actor.characters || 'Character not set')}</small></span></div><div class="status-options">${statusValues.map(value => `<button type="button" class="status-option ${status === value ? 'selected' : ''}" data-status="${value}" aria-pressed="${status === value}">${value}</button>`).join('')}</div>${['Late', 'Absent'].includes(status) ? `<input class="attendance-note" type="text" maxlength="500" aria-label="Note for ${escapeHtml(actor.name)}" placeholder="Add a note (optional)" value="${escapeHtml(state.notes.get(actor.id) || '')}">` : ''}</div>`;
+      return `<div class="attendance-row" data-actor="${actor.id}"><div class="actor-info"><span class="avatar">${escapeHtml(initials)}</span><span class="actor-details"><strong>${escapeHtml(actor.name)}</strong><small>${escapeHtml(actor.characters || 'Character not set')}</small>${tagBadges(actor.tags)}</span></div><div class="status-options">${attendanceStatusValues.map(value => `<button type="button" class="status-option ${status === value ? 'selected' : ''}" data-status="${value}" aria-pressed="${status === value}">${value}</button>`).join('')}</div>${['Late', 'Absent'].includes(status) ? `<input class="attendance-note" type="text" maxlength="500" aria-label="Note for ${escapeHtml(actor.name)}" placeholder="Add a note (optional)" value="${escapeHtml(state.notes.get(actor.id) || '')}">` : ''}</div>`;
     }).join('');
     $$('.attendance-row').forEach(row => {
       $$('.status-option', row).forEach(button => button.addEventListener('click', () => { state.statuses.set(row.dataset.actor, button.dataset.status); if (!['Late', 'Absent'].includes(button.dataset.status)) state.notes.delete(row.dataset.actor); renderAttendance(); }));
@@ -85,12 +129,13 @@
   function renderRoster() {
     $('#roster-form').classList.toggle('hidden', !state.isRosterAdmin);
     $('#roster-admin-note').classList.toggle('hidden', state.isRosterAdmin);
-    $('#cast-list').innerHTML = state.cast.length ? state.cast.map(actor => `<div class="cast-row"><div class="cast-main"><span class="avatar">${escapeHtml(actor.name.trim().split(/\s+/).map(p => p[0]).slice(0,2).join('').toUpperCase())}</span><span><strong>${escapeHtml(actor.name)}</strong><small>${escapeHtml(actor.characters || 'Character not set')}</small></span></div>${state.isRosterAdmin ? `<span><button class="remove-actor edit-actor" data-id="${actor.id}">Edit</button><button class="remove-actor delete-actor" data-id="${actor.id}">Remove</button></span>` : ''}</div>`).join('') : '<div class="empty-state">The cast roster is empty. Ask the production administrator to add cast members.</div>';
+    $('#cast-list').innerHTML = state.cast.length ? state.cast.map(actor => `<div class="cast-row"><div class="cast-main"><span class="avatar">${escapeHtml(actor.name.trim().split(/\s+/).map(p => p[0]).slice(0,2).join('').toUpperCase())}</span><span class="actor-details"><strong>${escapeHtml(actor.name)}</strong><small>${escapeHtml(actor.characters || 'Character not set')}</small>${tagBadges(actor.tags)}</span></div>${state.isRosterAdmin ? `<span><button class="remove-actor edit-actor" data-id="${actor.id}">Edit</button><button class="remove-actor delete-actor" data-id="${actor.id}">Remove</button></span>` : ''}</div>`).join('') : '<div class="empty-state">The cast roster is empty. Ask the production administrator to add cast members.</div>';
     $$('.edit-actor').forEach(button => button.addEventListener('click', async () => {
       const actor = state.cast.find(item => item.id === button.dataset.id); if (!actor) return;
       const name = prompt('Actor name', actor.name); if (name === null) return;
       const characters = prompt('Character(s), separate multiple roles with commas', actor.characters || ''); if (characters === null) return;
-      const { error } = await client.from('cast_members').update({ name: name.trim(), characters: characters.trim() }).eq('id', actor.id);
+      const tags = prompt('Attendance tags, separate multiple tags with commas', normalizeTags(actor.tags).join(', ')); if (tags === null) return;
+      const { error } = await client.from('cast_members').update({ name: name.trim(), characters: characters.trim(), tags: normalizeTags(tags) }).eq('id', actor.id);
       if (error) toast(errorMessage(error)); else { toast('Cast member updated.'); await loadData(); }
     }));
     $$('.delete-actor').forEach(button => button.addEventListener('click', async () => {
@@ -108,7 +153,7 @@
       const records = recordsFor(session.id);
       const date = new Date(`${session.rehearsal_date}T12:00:00`).toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' });
       const time = formatTime(session.rehearsal_time);
-      return `<article class="card history-session"><div class="history-session-head"><div><h3>${escapeHtml(session.rehearsal_type)} <span class="accent">·</span> ${escapeHtml(date)}${time ? ` <span class="session-time-label">· ${escapeHtml(time)}</span>` : ''}</h3><p>Called by ${escapeHtml(session.taker)} · ${records.length} cast members recorded</p></div><span class="session-count">Edit records &nbsp;⌄</span></div><div class="history-details hidden">${records.map(record => `<div class="history-row" data-record="${record.id}"><span class="history-actor"><strong>${escapeHtml(record.cast_members?.name || 'Former cast member')}</strong><small>${escapeHtml(record.cast_members?.characters || '')}</small></span><select aria-label="Attendance status">${statusValues.map(status => `<option ${record.status === status ? 'selected' : ''}>${status}</option>`).join('')}</select><input type="text" maxlength="500" aria-label="Attendance note" placeholder="Note for late arrival or absence" value="${escapeHtml(record.notes || '')}" ${['Late','Absent'].includes(record.status) ? '' : 'disabled'}></div>`).join('')}<div class="save-row">${state.isRosterAdmin ? `<button class="remove-actor delete-session" data-id="${session.id}">Delete this rehearsal…</button>` : '<span></span>'}<span class="muted">Changes sync to overview totals as you save each row.</span></div></div></article>`;
+      return `<article class="card history-session"><div class="history-session-head"><div><h3>${escapeHtml(session.rehearsal_type)} <span class="accent">·</span> ${escapeHtml(date)}${time ? ` <span class="session-time-label">· ${escapeHtml(time)}</span>` : ''}</h3><p>Called by ${escapeHtml(session.taker)} · ${records.length} cast members recorded</p></div><span class="session-count">Edit records &nbsp;⌄</span></div><div class="history-details hidden">${records.map(record => { const recordStatuses = record.status === 'Exempt' ? historyStatusValues : attendanceStatusValues; return `<div class="history-row" data-record="${record.id}"><span class="history-actor"><strong>${escapeHtml(record.cast_members?.name || 'Former cast member')}</strong><small>${escapeHtml(record.cast_members?.characters || '')}</small></span><select aria-label="Attendance status">${recordStatuses.map(status => `<option ${record.status === status ? 'selected' : ''}>${status}</option>`).join('')}</select><input type="text" maxlength="500" aria-label="Attendance note" placeholder="Note for late arrival or absence" value="${escapeHtml(record.notes || '')}" ${['Late','Absent'].includes(record.status) ? '' : 'disabled'}></div>`; }).join('')}<div class="save-row">${state.isRosterAdmin ? `<button class="remove-actor delete-session" data-id="${session.id}">Delete this rehearsal…</button>` : '<span></span>'}<span class="muted">Changes sync to overview totals as you save each row.</span></div></div></article>`;
     }).join('');
     $$('.history-session-head').forEach(head => head.addEventListener('click', () => $('.history-details', head.parentElement).classList.toggle('hidden')));
     $$('.history-row').forEach(row => {
@@ -139,8 +184,18 @@
     const lateTotal = [...lates.values()].reduce((a,b) => a+b, 0), absentTotal = [...absents.values()].reduce((a,b) => a+b, 0);
     $('#total-lates').textContent = lateTotal; $('#total-absences').textContent = absentTotal; $('#total-sessions').textContent = state.sessions.length; $('#total-cast').textContent = state.cast.length;
     $('#summary-body').innerHTML = state.cast.length ? state.cast.map(actor => `<tr><td>${escapeHtml(actor.name)}</td><td>${escapeHtml(actor.characters || '—')}</td><td>${lates.get(actor.id)}</td><td>${absents.get(actor.id)}</td><td>${calls.get(actor.id)}</td></tr>`).join('') : '<tr><td colspan="5" class="empty-state">Add your cast to see attendance totals.</td></tr>';
-    const max = Math.max(1, ...[...lates.values(), ...absents.values()]);
-    $('#chart').innerHTML = state.cast.length ? state.cast.map(actor => `<div class="bar-group" title="${escapeHtml(actor.name)} — ${lates.get(actor.id)} late, ${absents.get(actor.id)} absent"><div class="bar-pair"><span class="bar late" style="height:${Math.max(lates.get(actor.id) ? 4 : 0, lates.get(actor.id) / max * 100)}%"></span><span class="bar absent" style="height:${Math.max(absents.get(actor.id) ? 4 : 0, absents.get(actor.id) / max * 100)}%"></span></div><span class="bar-name">${escapeHtml(actor.name.split(' ')[0])}</span></div>`).join('') : '<div class="empty-state">Your late and absence chart will appear once you add cast members.</div>';
+    const callMode = $('#chart-mode').value === 'calls';
+    $('#chart-title').textContent = callMode ? 'Call-ins by cast member' : 'Late vs. absent';
+    $('#chart-legend').innerHTML = callMode ? '<i class="legend-calls"></i> Called in' : '<i class="legend-late"></i> Late <i class="legend-absent"></i> Absent';
+    $('#chart').setAttribute('aria-label', callMode ? 'Call-ins by actor' : 'Late and absent totals by actor');
+    const max = Math.max(1, ...(callMode ? [...calls.values()] : [...lates.values(), ...absents.values()]));
+    $('#chart').innerHTML = state.cast.length ? state.cast.map(actor => {
+      const label = callMode ? `${calls.get(actor.id)} call-ins` : `${lates.get(actor.id)} late, ${absents.get(actor.id)} absent`;
+      const bars = callMode
+        ? `<span class="bar calls" style="height:${Math.max(calls.get(actor.id) ? 4 : 0, calls.get(actor.id) / max * 100)}%"></span>`
+        : `<span class="bar late" style="height:${Math.max(lates.get(actor.id) ? 4 : 0, lates.get(actor.id) / max * 100)}%"></span><span class="bar absent" style="height:${Math.max(absents.get(actor.id) ? 4 : 0, absents.get(actor.id) / max * 100)}%"></span>`;
+      return `<div class="bar-group" title="${escapeHtml(actor.name)} — ${label}"><div class="bar-pair ${callMode ? 'single' : ''}">${bars}</div><span class="bar-name">${escapeHtml(actor.name.split(' ')[0])}</span></div>`;
+    }).join('') : '<div class="empty-state">Your attendance chart will appear once you add cast members.</div>';
     $('#recent-list').innerHTML = state.sessions.length ? state.sessions.slice(0, 4).map(session => `<div class="recent-item"><div><strong>${escapeHtml(session.rehearsal_type)}</strong><small>${escapeHtml(new Date(`${session.rehearsal_date}T12:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }))}${session.rehearsal_time ? ` · ${escapeHtml(formatTime(session.rehearsal_time))}` : ''} · ${escapeHtml(session.taker)}</small></div><span class="recent-tag">${recordsFor(session.id).filter(record => record.status !== 'Exempt').length} called</span></div>`).join('') : '<div class="empty-state">No rehearsals saved yet.</div>';
   }
   function renderAdmin() {
@@ -168,7 +223,8 @@
 
   $$('.tab').forEach(tab => tab.addEventListener('click', () => gotoPage(tab.dataset.page)));
   $$('[data-goto]').forEach(button => button.addEventListener('click', () => gotoPage(button.dataset.goto)));
-  $$('.bulk-actions button').forEach(button => button.addEventListener('click', () => { state.cast.forEach(actor => { state.statuses.set(actor.id, button.dataset.bulk); if (!['Late', 'Absent'].includes(button.dataset.bulk)) state.notes.delete(actor.id); }); renderAttendance(); }));
+  $$('.bulk-actions button').forEach(button => button.addEventListener('click', () => { castForAttendance().forEach(actor => { state.statuses.set(actor.id, button.dataset.bulk); if (!['Late', 'Absent'].includes(button.dataset.bulk)) state.notes.delete(actor.id); }); renderAttendance(); }));
+  $('#chart-mode').addEventListener('change', renderOverview);
   $('#today-button').addEventListener('click', () => { $('#session-date').value = localDate(); });
   $('#session-date').value = localDate();
   function refreshDuplicateHint() {
@@ -197,12 +253,12 @@
     if (error) toast(error.code === '23505' ? 'That rehearsal type already exists.' : errorMessage(error)); else { input.value = ''; toast('Custom rehearsal type added.'); await loadData(); $('#session-type').value = name; }
   });
   $('#roster-form').addEventListener('submit', async event => {
-    event.preventDefault(); const name = $('#actor-name').value.trim(), characters = $('#actor-characters').value.trim(); if (!name) return;
-    const { error } = await client.from('cast_members').insert({ name, characters });
+    event.preventDefault(); const name = $('#actor-name').value.trim(), characters = $('#actor-characters').value.trim(), tags = normalizeTags($('#actor-tags').value); if (!name) return;
+    const { error } = await client.from('cast_members').insert({ name, characters, tags });
     if (error) toast(errorMessage(error)); else { $('#roster-form').reset(); toast('Cast member added to the shared roster.'); await loadData(); }
   });
   $('#session-form').addEventListener('submit', async event => {
-    event.preventDefault(); if (!state.cast.length) { toast('Add cast members before saving a rehearsal.'); return; }
+    event.preventDefault(); const attendanceCast = castForAttendance(); if (!attendanceCast.length) { toast(state.cast.length ? 'Choose at least one tag with cast members, or select Everyone.' : 'Add cast members before saving a rehearsal.'); return; }
     const date = $('#session-date').value, type = $('#session-type').value, taker = $('#session-taker').value.trim();
     if (!date || !type || !taker) { toast('Enter a date, rehearsal type, and attendance taker.'); return; }
     const time = $('#multiple-practices').checked ? $('#session-time').value : null;
@@ -212,9 +268,10 @@
       const titles = duplicate.map(session => `${session.rehearsal_date}${session.rehearsal_time ? ` ${formatTime(session.rehearsal_time)}` : ''} · ${session.rehearsal_type} · ${session.taker}`).join('\n');
       if (!confirm(`A rehearsal may already be saved for this date and time. Review the existing session(s) first:\n\n${titles}\n\nSave another anyway?`)) { gotoPage('history'); return; }
     }
-    const nonHere = state.cast.filter(actor => statusFor(actor.id) !== 'Here').length;
-    if (!confirm(`Save ${type} rehearsal on ${date}${time ? ` at ${formatTime(time)}` : ''} for ${state.cast.length} cast members? ${nonHere} marked ${nonHere === 1 ? 'member is' : 'members are'} not Here. Exempt records will be excluded from call-in totals.`)) return;
-    const records = state.cast.map(actor => ({ cast_member_id: actor.id, status: statusFor(actor.id), notes: state.notes.get(actor.id) || '' }));
+    const nonHere = attendanceCast.filter(actor => statusFor(actor.id) !== 'Here').length;
+    const groupLabel = state.attendanceTags.size ? ` matching ${[...state.attendanceTags].join(', ')}` : '';
+    if (!confirm(`Save ${type} rehearsal on ${date}${time ? ` at ${formatTime(time)}` : ''} for ${attendanceCast.length} cast members${groupLabel}? ${nonHere} marked ${nonHere === 1 ? 'member is' : 'members are'} not Here. Cast outside the selected group will not be included in this attendance record.`)) return;
+    const records = attendanceCast.map(actor => ({ cast_member_id: actor.id, status: statusFor(actor.id), notes: state.notes.get(actor.id) || '' }));
     const { data: savedId, error } = await client.rpc('save_rehearsal', { p_date: date, p_type: type, p_taker: taker, p_time: time, p_records: records });
     if (error) { toast(errorMessage(error)); return; }
     state.statuses.clear(); state.notes.clear(); $('#session-date').value = localDate(); $('#multiple-practices').checked = false; $('#multiple-practices').dispatchEvent(new Event('change'));
