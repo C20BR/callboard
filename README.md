@@ -6,7 +6,7 @@ A mobile-friendly attendance tracker for rehearsal teams. It runs as a static si
 
 - One shared cast roster; multiple characters are stored together on each actor.
 - Here, Late, and Absent statuses, with bulk actions and a date helper.
-- Shared roster tags such as Ensemble, Soloist, and Main character. Attendance can be filtered to one or more tags; only the selected cast are saved for that rehearsal.
+- Shared roster tags such as Ensemble, Soloist, and Main character. Attendance can be filtered to one or more tags, or any combination of cast members can be selected by name without changing their saved tags; only selected cast are saved for that rehearsal.
 - Music, Full Cast, and Scene(s) built-in types, plus custom types.
 - Confirmed rehearsal saves, duplicate date/type review, attendance notes, and editable history.
 - Corrections update the underlying attendance record, so late, absence, and call-in totals stay synchronized.
@@ -16,7 +16,7 @@ A mobile-friendly attendance tracker for rehearsal teams. It runs as a static si
 - The production administrator is the only account that can add, edit, or remove cast members. Every authorized member can take attendance; their username is recorded as the attendance taker.
 - An administrator-only tab can clear rehearsal history or, after history is cleared, clear the cast roster.
 
-Call-ins count one Here, Late, or Absent attendance record per person per rehearsal. The tag filter determines who has a record on each new attendance sheet; cast members outside the selected groups are left off that session. Older Exempt records remain in history and are excluded from call-in totals. There is no separate expected-rehearsal schedule, so an actor without a record in a session is not counted.
+Call-ins count one Here, Late, or Absent attendance record per person per rehearsal. The tag or name selection determines who has a record on each new attendance sheet; cast members outside the selection are left off that session. Name selection is temporary and does not edit roster tags. Older Exempt records remain in history and are excluded from call-in totals. There is no separate expected-rehearsal schedule, so an actor without a record in a session is not counted.
 
 ## 1. Create the private database
 

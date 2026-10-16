@@ -6,7 +6,7 @@
   const client = configured && window.supabase ? window.supabase.createClient(config.supabaseUrl, config.supabaseAnonKey) : null;
   const $ = (selector, root = document) => root.querySelector(selector);
   const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
-  const state = { user: null, profile: null, isRosterAdmin: false, cast: [], types: [], sessions: [], records: [], statuses: new Map(), notes: new Map(), attendanceTags: new Set() };
+  const state = { user: null, profile: null, isRosterAdmin: false, cast: [], types: [], sessions: [], records: [], statuses: new Map(), notes: new Map(), attendanceMode: 'all', attendanceTags: new Set(), attendancePersonIds: new Set(), attendanceNameSearch: '' };
   const attendanceStatusValues = ['Here', 'Late', 'Absent'];
   const historyStatusValues = [...attendanceStatusValues, 'Exempt'];
   let toastTimer;
@@ -84,31 +84,54 @@
     return [...tags.values()].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
   }
   function castForAttendance() {
-    if (!state.attendanceTags.size) return state.cast;
-    return state.cast.filter(actor => normalizeTags(actor.tags).some(tag => state.attendanceTags.has(tag.toLocaleLowerCase())));
+    if (state.attendanceMode === 'people') return state.cast.filter(actor => state.attendancePersonIds.has(actor.id));
+    if (state.attendanceMode === 'tags' && state.attendanceTags.size) return state.cast.filter(actor => normalizeTags(actor.tags).some(tag => state.attendanceTags.has(tag.toLocaleLowerCase())));
+    return state.cast;
   }
   function tagBadges(tags) {
     const values = normalizeTags(tags);
     return values.length ? `<span class="tag-badges">${values.map(tag => `<span class="tag-badge">${escapeHtml(tag)}</span>`).join('')}</span>` : '';
   }
   function statusFor(id) { return state.statuses.get(id) || 'Here'; }
+  function renderAttendancePeople() {
+    const choices = $('#attendance-people-choices');
+    if (!choices) return;
+    const query = state.attendanceNameSearch.trim().toLocaleLowerCase();
+    const people = state.cast.filter(actor => actor.name.toLocaleLowerCase().includes(query));
+    choices.innerHTML = people.length ? people.map(actor => `<label class="attendance-person-choice"><input type="checkbox" data-person-id="${escapeHtml(actor.id)}" ${state.attendancePersonIds.has(actor.id) ? 'checked' : ''}><span>${escapeHtml(actor.name)}</span>${actor.characters ? `<small>${escapeHtml(actor.characters)}</small>` : ''}</label>`).join('') : '<p class="attendance-no-matches">No names match that search.</p>';
+    $$('[data-person-id]', choices).forEach(input => input.addEventListener('change', () => {
+      if (input.checked) state.attendancePersonIds.add(input.dataset.personId); else state.attendancePersonIds.delete(input.dataset.personId);
+      renderAttendance();
+    }));
+  }
   function renderAttendanceTagFilter() {
     const tags = allRosterTags(), filter = $('#attendance-tag-filter');
     const validKeys = new Set(tags.map(tag => tag.toLocaleLowerCase()));
     state.attendanceTags = new Set([...state.attendanceTags].filter(tag => validKeys.has(tag)));
-    filter.innerHTML = `<div class="tag-filter-buttons"><button type="button" class="tag-filter-button ${state.attendanceTags.size ? '' : 'selected'}" data-tag-all aria-pressed="${!state.attendanceTags.size}">Everyone</button>${tags.map(tag => {
-      const key = tag.toLocaleLowerCase(), selected = state.attendanceTags.has(key);
+    if (state.attendanceMode === 'tags' && !state.attendanceTags.size) state.attendanceMode = 'all';
+    const validIds = new Set(state.cast.map(actor => actor.id));
+    state.attendancePersonIds = new Set([...state.attendancePersonIds].filter(id => validIds.has(id)));
+    filter.innerHTML = `<div class="tag-filter-buttons"><button type="button" class="tag-filter-button ${state.attendanceMode === 'all' ? 'selected' : ''}" data-tag-all aria-pressed="${state.attendanceMode === 'all'}">Everyone</button>${tags.map(tag => {
+      const key = tag.toLocaleLowerCase(), selected = state.attendanceMode === 'tags' && state.attendanceTags.has(key);
       return `<button type="button" class="tag-filter-button ${selected ? 'selected' : ''}" data-tag="${escapeHtml(key)}" aria-pressed="${selected}">${escapeHtml(tag)}</button>`;
-    }).join('')}</div><p class="attendance-filter-note">${tags.length ? 'Choose one or more tags; a person is included if they have any selected tag. People outside the selection will not be saved on this attendance sheet.' : 'Add tags in Cast roster to filter attendance by group.'}</p>`;
-    $('[data-tag-all]', filter).addEventListener('click', () => { state.attendanceTags.clear(); renderAttendance(); });
+    }).join('')}<button type="button" class="tag-filter-button ${state.attendanceMode === 'people' ? 'selected' : ''}" data-tag-people aria-pressed="${state.attendanceMode === 'people'}">Choose by name</button></div><p class="attendance-filter-note">${state.attendanceMode === 'people' ? 'Select any combination of cast members for this attendance sheet. This temporary selection does not change their saved roster tags.' : state.attendanceMode === 'tags' ? 'Choose one or more tags; a person is included if they have any selected tag.' : 'Everyone on the shared roster is included.'} People outside the selection will not be saved on this attendance sheet.</p>${state.attendanceMode === 'people' ? '<div class="attendance-people-picker"><label class="attendance-name-search">Find a cast member<input id="attendance-name-search" type="search" autocomplete="off" placeholder="Search names" value="' + escapeHtml(state.attendanceNameSearch) + '"></label><div id="attendance-people-choices" class="attendance-people-choices"></div></div>' : ''}`;
+    $('[data-tag-all]', filter).addEventListener('click', () => { state.attendanceMode = 'all'; state.attendanceTags.clear(); renderAttendance(); });
     $$('[data-tag]', filter).forEach(button => button.addEventListener('click', () => {
       const tag = button.dataset.tag;
+      if (state.attendanceMode !== 'tags') { state.attendanceMode = 'tags'; state.attendanceTags.clear(); }
       if (state.attendanceTags.has(tag)) state.attendanceTags.delete(tag); else state.attendanceTags.add(tag);
+      if (!state.attendanceTags.size) state.attendanceMode = 'all';
       renderAttendance();
     }));
+    $('[data-tag-people]', filter).addEventListener('click', () => { state.attendanceMode = 'people'; state.attendanceTags.clear(); renderAttendance(); });
+    if (state.attendanceMode === 'people') {
+      const search = $('#attendance-name-search');
+      search.addEventListener('input', () => { state.attendanceNameSearch = search.value; renderAttendancePeople(); });
+      renderAttendancePeople();
+    }
     const included = castForAttendance();
     $('#roster-count').textContent = String(included.length);
-    $('#attendance-filter-count').textContent = state.attendanceTags.size ? `${included.length} of ${state.cast.length} people included` : `${included.length} people included`;
+    $('#attendance-filter-count').textContent = state.attendanceMode === 'all' ? `${included.length} people included` : `${included.length} of ${state.cast.length} people included`;
     $('#save-session').disabled = included.length === 0;
   }
   function renderAttendance() {
@@ -116,7 +139,7 @@
     const list = $('#attendance-list');
     if (!state.cast.length) { list.innerHTML = '<div class="empty-state">Your cast roster is empty. Add actors in Cast roster to begin.</div>'; return; }
     const included = castForAttendance();
-    if (!included.length) { list.innerHTML = '<div class="empty-state">No cast members have the selected tags. Choose another tag or select Everyone.</div>'; return; }
+    if (!included.length) { list.innerHTML = `<div class="empty-state">${state.attendanceMode === 'people' ? 'No people selected yet. Check the names above to add them to this attendance sheet.' : 'No cast members have the selected tags. Choose another tag or select Everyone.'}</div>`; return; }
     list.innerHTML = included.map(actor => {
       const status = statusFor(actor.id), initials = actor.name.trim().split(/\s+/).map(part => part[0]).slice(0, 2).join('').toUpperCase();
       return `<div class="attendance-row" data-actor="${actor.id}"><div class="actor-info"><span class="avatar">${escapeHtml(initials)}</span><span class="actor-details"><strong>${escapeHtml(actor.name)}</strong><small>${escapeHtml(actor.characters || 'Character not set')}</small>${tagBadges(actor.tags)}</span></div><div class="status-options">${attendanceStatusValues.map(value => `<button type="button" class="status-option ${status === value ? 'selected' : ''}" data-status="${value}" aria-pressed="${status === value}">${value}</button>`).join('')}</div>${['Late', 'Absent'].includes(status) ? `<input class="attendance-note" type="text" maxlength="500" aria-label="Note for ${escapeHtml(actor.name)}" placeholder="Add a note (optional)" value="${escapeHtml(state.notes.get(actor.id) || '')}">` : ''}</div>`;
@@ -258,7 +281,7 @@
     if (error) toast(errorMessage(error)); else { $('#roster-form').reset(); toast('Cast member added to the shared roster.'); await loadData(); }
   });
   $('#session-form').addEventListener('submit', async event => {
-    event.preventDefault(); const attendanceCast = castForAttendance(); if (!attendanceCast.length) { toast(state.cast.length ? 'Choose at least one tag with cast members, or select Everyone.' : 'Add cast members before saving a rehearsal.'); return; }
+    event.preventDefault(); const attendanceCast = castForAttendance(); if (!attendanceCast.length) { toast(state.attendanceMode === 'people' ? 'Choose at least one person by name before saving.' : state.cast.length ? 'Choose at least one tag with cast members, or select Everyone.' : 'Add cast members before saving a rehearsal.'); return; }
     const date = $('#session-date').value, type = $('#session-type').value, taker = $('#session-taker').value.trim();
     if (!date || !type || !taker) { toast('Enter a date, rehearsal type, and attendance taker.'); return; }
     const time = $('#multiple-practices').checked ? $('#session-time').value : null;
@@ -269,8 +292,8 @@
       if (!confirm(`A rehearsal may already be saved for this date and time. Review the existing session(s) first:\n\n${titles}\n\nSave another anyway?`)) { gotoPage('history'); return; }
     }
     const nonHere = attendanceCast.filter(actor => statusFor(actor.id) !== 'Here').length;
-    const groupLabel = state.attendanceTags.size ? ` matching ${[...state.attendanceTags].join(', ')}` : '';
-    if (!confirm(`Save ${type} rehearsal on ${date}${time ? ` at ${formatTime(time)}` : ''} for ${attendanceCast.length} cast members${groupLabel}? ${nonHere} marked ${nonHere === 1 ? 'member is' : 'members are'} not Here. Cast outside the selected group will not be included in this attendance record.`)) return;
+    const groupLabel = state.attendanceMode === 'tags' && state.attendanceTags.size ? ` matching ${[...state.attendanceTags].join(', ')}` : state.attendanceMode === 'people' ? ' selected by name' : '';
+    if (!confirm(`Save ${type} rehearsal on ${date}${time ? ` at ${formatTime(time)}` : ''} for ${attendanceCast.length} cast members${groupLabel}? ${nonHere} marked ${nonHere === 1 ? 'member is' : 'members are'} not Here. Cast outside this selection will not be included in this attendance record.`)) return;
     const records = attendanceCast.map(actor => ({ cast_member_id: actor.id, status: statusFor(actor.id), notes: state.notes.get(actor.id) || '' }));
     const { data: savedId, error } = await client.rpc('save_rehearsal', { p_date: date, p_type: type, p_taker: taker, p_time: time, p_records: records });
     if (error) { toast(errorMessage(error)); return; }
