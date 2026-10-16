@@ -1,0 +1,44 @@
+name: Deploy Callboard to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out project
+        uses: actions/checkout@v4
+      - name: Add public Supabase client settings
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          node -e 'const fs=require("fs"); const u=process.env.SUPABASE_URL; const k=process.env.SUPABASE_ANON_KEY; if(!u||!k) throw new Error("Set SUPABASE_URL and SUPABASE_ANON_KEY repository secrets."); fs.writeFileSync("config.js", `window.CALLBOARD_CONFIG = ${JSON.stringify({supabaseUrl:u,supabaseAnonKey:k})};\n`);'
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+      - name: Upload site
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: .
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Deploy site
+        id: deployment
+        uses: actions/deploy-pages@v4

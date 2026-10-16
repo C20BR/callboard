@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#16231f">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Callboard">
+  <meta name="description" content="A private rehearsal attendance tracker for your cast.">
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="icon" href="./icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="./icon-180.png">
+  <link rel="stylesheet" href="./styles.css">
+  <title>Callboard · Rehearsal attendance</title>
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <a class="brand" href="#home" aria-label="Callboard home"><span class="brand-mark">C</span><span>CALLBOARD<small>REHEARSAL ATTENDANCE</small></span></a>
+      <div class="top-actions"><span id="connection" class="connection"><i></i>Not connected</span><button id="signout" class="quiet hidden">Sign out</button></div>
+    </header>
+
+    <main>
+      <section id="auth-view" class="auth-layout">
+        <div class="welcome-panel"><p class="eyebrow">YOUR PRODUCTION, IN SYNC</p><h1>Every rehearsal,<br><em>accounted for.</em></h1><p>One shared cast roster. A clear record of each call. Totals that stay current when you make a correction.</p><div class="privacy-note"><span>◆</span><span>Private to your invited production team</span></div></div>
+        <form id="login-form" class="card login-card">
+          <p class="eyebrow">WELCOME BACK</p><h2>Sign in</h2><p class="muted">Your production manager must invite your email first.</p>
+          <label>Email address<input name="email" type="email" autocomplete="username" required placeholder="you@example.com"></label>
+          <label>Password<input name="password" type="password" autocomplete="current-password" required placeholder="Your password"></label>
+          <button class="primary full" type="submit">Sign in <span>→</span></button>
+          <button id="forgot-password" class="text-button" type="button">Forgot password?</button>
+          <p id="auth-message" class="form-message" aria-live="polite"></p>
+        </form>
+      </section>
+
+      <section id="app-view" class="hidden">
+        <div class="page-heading"><div><p class="eyebrow" id="today-label"></p><h1>Good to see you<span class="accent">.</span></h1><p class="muted">The room is ready when you are.</p></div><button id="export-button" class="secondary">↓ <span>Export backup</span></button></div>
+        <nav class="tabs" aria-label="Main navigation"><button class="tab active" data-page="overview">Overview</button><button class="tab" data-page="attendance">Take attendance</button><button class="tab" data-page="history">History</button><button class="tab" data-page="roster">Cast roster</button></nav>
+
+        <section id="page-overview" class="page active">
+          <div class="stat-grid"><article class="stat-card"><span class="stat-icon green">◷</span><span class="stat-label">TOTAL LATES</span><strong id="total-lates">0</strong><small>Across all cast members</small></article><article class="stat-card"><span class="stat-icon coral">○</span><span class="stat-label">TOTAL ABSENCES</span><strong id="total-absences">0</strong><small>Across all cast members</small></article><article class="stat-card"><span class="stat-icon gold">✳</span><span class="stat-label">REHEARSALS SAVED</span><strong id="total-sessions">0</strong><small>In your production history</small></article><article class="stat-card"><span class="stat-icon blue">♟</span><span class="stat-label">ACTIVE CAST</span><strong id="total-cast">0</strong><small>On the shared roster</small></article></div>
+          <div class="overview-grid"><article class="card chart-card"><div class="section-heading"><div><p class="eyebrow">ATTENDANCE PATTERNS</p><h2>Late vs. absent</h2></div><span class="legend"><i class="legend-late"></i> Late <i class="legend-absent"></i> Absent</span></div><div id="chart" class="chart" role="img" aria-label="Late and absent totals by actor"></div></article><article class="card recent-card"><div class="section-heading"><div><p class="eyebrow">THE LATEST</p><h2>Recent rehearsals</h2></div><button class="text-button" data-goto="history">All history →</button></div><div id="recent-list" class="recent-list"></div></article></div>
+          <article class="card summary-card"><div class="section-heading"><div><p class="eyebrow">CAST SNAPSHOT</p><h2>Attendance summary</h2></div></div><div class="table-wrap"><table><thead><tr><th>Actor</th><th>Character(s)</th><th>Lates</th><th>Absences</th><th>Call-ins</th></tr></thead><tbody id="summary-body"></tbody></table></div></article>
+        </section>
+
+        <section id="page-attendance" class="page">
+          <div class="page-heading sub-heading"><div><p class="eyebrow">DAILY CALL</p><h1>Take attendance<span class="accent">.</span></h1><p class="muted">A record is created for every cast member, including Exempt.</p></div></div>
+          <form id="session-form">
+            <article class="card session-meta"><div class="section-heading"><div><p class="eyebrow">SESSION DETAILS</p><h2>Set the call</h2></div><button id="today-button" class="text-button" type="button">Use today’s date</button></div><div class="meta-fields"><label>Rehearsal date<input id="session-date" type="date" required></label><label>Rehearsal type<select id="session-type" required></select></label><label>Attendance taker<input id="session-taker" type="text" required maxlength="120" placeholder="Your name"></label></div><div class="custom-type"><input id="new-type" type="text" maxlength="80" placeholder="Add a custom rehearsal type"><button id="add-type" class="secondary" type="button">+ Add type</button></div></article>
+            <article class="card attendance-card"><div class="section-heading roster-heading"><div><p class="eyebrow">TODAY’S CAST</p><h2>Mark the room <span id="roster-count" class="count-pill">0</span></h2></div><div class="bulk-actions"><span>Set everyone:</span><button type="button" data-bulk="Here">Here</button><button type="button" data-bulk="Late">Late</button><button type="button" data-bulk="Absent">Absent</button><button type="button" data-bulk="Exempt">Exempt</button></div></div><div id="attendance-list" class="attendance-list"></div><div class="save-row"><span id="duplicate-hint" class="muted"></span><button id="save-session" class="primary" type="submit">Save rehearsal <span>→</span></button></div></article>
+          </form>
+        </section>
+
+        <section id="page-history" class="page"><div class="page-heading sub-heading"><div><p class="eyebrow">YOUR PRODUCTION RECORD</p><h1>Rehearsal history<span class="accent">.</span></h1><p class="muted">Correct attendance and notes; totals update automatically.</p></div></div><div id="history-list" class="history-list"></div></section>
+
+        <section id="page-roster" class="page"><div class="page-heading sub-heading"><div><p class="eyebrow">ONE SHARED ROSTER</p><h1>Meet the cast<span class="accent">.</span></h1><p class="muted">Each actor appears once, with all their characters together.</p></div></div><article class="card roster-card"><form id="roster-form" class="roster-form"><label>Actor name<input id="actor-name" maxlength="120" required placeholder="Actor’s name"></label><label>Character(s)<input id="actor-characters" maxlength="300" placeholder="Separate multiple roles with commas"></label><button class="primary" type="submit">Add to cast <span>+</span></button></form><div id="cast-list" class="cast-list"></div></article></section>
+        <footer class="app-footer"><span>Callboard · made for the moments that make a show</span><span>Private production workspace</span></footer>
+      </section>
+    </main>
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  </div>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="./config.js"></script>
+  <script src="./app.js"></script>
+</body>
+</html>
