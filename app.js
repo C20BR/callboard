@@ -268,13 +268,17 @@
     $('#chart-title').textContent = callMode ? 'Call-ins by cast member' : 'Late vs. absent';
     $('#chart-legend').innerHTML = callMode ? '<i class="legend-calls"></i> Called in' : '<i class="legend-late"></i> Late <i class="legend-absent"></i> Absent';
     $('#chart').setAttribute('aria-label', callMode ? 'Call-ins by actor' : 'Late and absent totals by actor');
-    const max = Math.max(1, ...(callMode ? [...calls.values()] : [...lates.values(), ...absents.values()]));
+    const max = Math.max(1, ...state.cast.map(actor => callMode
+      ? calls.get(actor.id)
+      : lates.get(actor.id) + absents.get(actor.id)));
     $('#chart').innerHTML = state.cast.length ? state.cast.map(actor => {
-      const label = callMode ? `${calls.get(actor.id)} call-ins` : `${lates.get(actor.id)} late, ${absents.get(actor.id)} absent`;
+      const late = lates.get(actor.id), absent = absents.get(actor.id), callIns = calls.get(actor.id);
+      const label = callMode ? `${callIns} call-ins` : `${late} late, ${absent} absent`;
       const bars = callMode
-        ? `<span class="bar calls" style="height:${Math.max(calls.get(actor.id) ? 4 : 0, calls.get(actor.id) / max * 100)}%"></span>`
-        : `<span class="bar late" style="height:${Math.max(lates.get(actor.id) ? 4 : 0, lates.get(actor.id) / max * 100)}%"></span><span class="bar absent" style="height:${Math.max(absents.get(actor.id) ? 4 : 0, absents.get(actor.id) / max * 100)}%"></span>`;
-      return `<div class="bar-group" title="${escapeHtml(actor.name)} — ${label}"><div class="bar-pair ${callMode ? 'single' : ''}">${bars}</div><span class="bar-name">${escapeHtml(actor.name.split(' ')[0])}</span></div>`;
+        ? `<span class="bar calls" style="width:${callIns / max * 100}%"></span>`
+        : `<span class="bar late" style="width:${late / max * 100}%"></span><span class="bar absent" style="width:${absent / max * 100}%"></span>`;
+      const value = callMode ? `${callIns} ${callIns === 1 ? 'call-in' : 'call-ins'}` : `${late} late · ${absent} absent`;
+      return `<div class="bar-group" role="group" aria-label="${escapeHtml(`${actor.name}: ${label}`)}"><span class="bar-name">${escapeHtml(actor.name)}</span><div class="bar-track ${callMode ? 'single' : ''}" aria-hidden="true">${bars}</div><span class="bar-value">${value}</span></div>`;
     }).join('') : '<div class="empty-state">Your attendance chart will appear once you add cast members.</div>';
     $('#recent-list').innerHTML = state.sessions.length ? state.sessions.slice(0, 4).map(session => `<div class="recent-item"><div><strong>${escapeHtml(session.rehearsal_type)}</strong><small>${escapeHtml(new Date(`${session.rehearsal_date}T12:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }))}${session.rehearsal_time ? ` · ${escapeHtml(formatTime(session.rehearsal_time))}` : ''} · ${escapeHtml(session.taker)}</small></div><span class="recent-tag">${recordsFor(session.id).filter(record => record.status !== 'Exempt').length} called</span></div>`).join('') : '<div class="empty-state">No rehearsals saved yet.</div>';
   }
