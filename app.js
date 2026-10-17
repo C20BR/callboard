@@ -161,8 +161,13 @@
     state.bulkTagSourceFilter = sourceFilter.value;
     options.innerHTML = tags.map(tag => `<option value="${escapeHtml(tag)}"></option>`).join('');
     const matches = state.cast.filter(actor => castMatchesSearch(actor, state.bulkTagPersonSearch) && (!state.bulkTagSourceFilter || normalizeTags(actor.tags).some(tag => tag.toLocaleLowerCase() === state.bulkTagSourceFilter))).sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
-    $('#bulk-tag-match-count').textContent = `${matches.length} matching ${matches.length === 1 ? 'person' : 'people'} · ${state.bulkTagSelectedIds.size} selected`;
-    list.innerHTML = matches.length ? matches.map(actor => `<label class="bulk-tag-person"><input type="checkbox" data-bulk-person="${escapeHtml(actor.id)}" ${state.bulkTagSelectedIds.has(actor.id) ? 'checked' : ''}><span><strong>${escapeHtml(actor.name)}</strong><small>${escapeHtml(actor.characters || 'Character not set')}</small></span>${tagBadges(actor.tags)}</label>`).join('') : '<p class="empty-state">No cast members match these filters.</p>';
+    const visibleSelected = matches.filter(actor => state.bulkTagSelectedIds.has(actor.id)).length;
+    const hiddenSelected = state.bulkTagSelectedIds.size - visibleSelected;
+    $('#bulk-tag-match-count').textContent = `${matches.length} matching · ${visibleSelected} selected here${hiddenSelected ? ` · ${hiddenSelected} selected outside these filters` : ''}`;
+    const selectMatches = $('#bulk-tag-select-matches');
+    selectMatches.textContent = matches.length ? `Select all ${matches.length} matching` : 'Select matching';
+    selectMatches.disabled = matches.length === 0;
+    list.innerHTML = matches.length ? matches.map(actor => `<label class="bulk-tag-person ${state.bulkTagSelectedIds.has(actor.id) ? 'selected' : ''}"><input type="checkbox" data-bulk-person="${escapeHtml(actor.id)}" ${state.bulkTagSelectedIds.has(actor.id) ? 'checked' : ''}><span><strong>${escapeHtml(actor.name)}</strong><small>${escapeHtml(actor.characters || 'Character not set')}</small></span>${tagBadges(actor.tags)}</label>`).join('') : '<p class="empty-state">No cast members match these filters.</p>';
     $$('[data-bulk-person]', list).forEach(input => input.addEventListener('change', () => {
       if (input.checked) state.bulkTagSelectedIds.add(input.dataset.bulkPerson); else state.bulkTagSelectedIds.delete(input.dataset.bulkPerson);
       renderBulkTagAssignment();
