@@ -24,3 +24,122 @@
 .tag-group-create-form{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:9px;max-width:560px}.tag-group-create-form label{display:grid;gap:6px;color:#536159;font-size:10px;font-weight:600}.tag-group-create-form input,.tag-category-row input{width:100%;min-width:0;height:36px;border:1px solid #e3e9e3;border-radius:6px;padding:0 10px;background:#fff;color:var(--ink);font:12px 'DM Sans'}.tag-group-create-form button,.tag-category-actions button{min-height:36px}.roster-tag-category-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr));gap:8px}.tag-category-row{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:7px 10px;min-width:0;padding:10px;border:1px solid #e7ece6;border-radius:8px;background:#fff}.tag-category-row>label{min-width:0}.tag-category-row small{color:var(--muted);font-size:10px;white-space:nowrap}.tag-category-actions{grid-column:1/-1;display:flex;align-items:center;justify-content:flex-end;gap:7px;flex-wrap:wrap}.tag-category-actions .remove-actor{min-height:34px}.tag-group-assignment-heading{padding-top:4px}.tag-group-assignment-heading h3{margin:0;color:#536159;font-size:12px;font-weight:600}.tag-group-assignment-heading:empty{display:none}
 .visually-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 @media(max-width:600px){.tag-group-create-form{grid-template-columns:1fr}.tag-group-create-form button{width:100%}.roster-tag-category-list{grid-template-columns:1fr}.tag-category-row{grid-template-columns:minmax(0,1fr) auto}.tag-category-actions{justify-content:stretch}.tag-category-actions button{flex:1}}
+
+/* Velvet, brass and warm stage light bring one visual language to every page. */
+:root{color-scheme:dark;--ink:#f5eee4;--muted:#b8ada2;--paper:#090a11;--white:#171922;--green:#e8b66d;--green-dark:#ffd28e;--line:#38333a;--coral:#e88776;--gold:#e9bd68;--blue:#98bbc9;--shadow:0 18px 52px #00000038}
+body{min-height:100vh;background:linear-gradient(117deg,transparent 0 13%,#f6d79a08 18%,transparent 32%),linear-gradient(243deg,transparent 0 17%,#e4a75c08 22%,transparent 36%),radial-gradient(ellipse 48rem 34rem at 8% -7%,#d69c5721,transparent 72%),radial-gradient(ellipse 42rem 32rem at 92% -6%,#8e39441e,transparent 70%),linear-gradient(180deg,#101019 0,#090a11 46rem);color:var(--ink);background-attachment:fixed}
+.app-shell{max-width:1320px}
+.topbar{border-color:#e6c48c30}
+.brand{color:#f6eee3;letter-spacing:2px}
+.brand small{color:#c7b7a8;letter-spacing:2px}
+.brand-mark{border:1px solid #f4d19288;border-radius:50%;background:radial-gradient(circle at 35% 25%,#f2ca85,#a65b46 78%);color:#251913;box-shadow:0 0 28px #e3aa5b2a}
+.connection{color:#c4b6a8}
+.connection i{background:#d6a85f}
+.connection.online i{background:#8dbb8d;box-shadow:0 0 10px #8dbb8d80}
+.card,.stat-card{background:linear-gradient(145deg,#191a24f5,#13151df5);border-color:#e9d4b21b;box-shadow:0 18px 48px #00000028}
+.login-card{position:relative;overflow:hidden;border-color:#e8bf762e;background:linear-gradient(150deg,#201d24f7,#14151ef7);box-shadow:0 28px 76px #0000004a,0 0 60px #d8954c0d}
+.login-card::before{content:"";position:absolute;top:-100px;right:-95px;width:240px;height:240px;border-radius:50%;background:radial-gradient(circle,#e8b66d1d,transparent 70%);pointer-events:none}
+.welcome-panel h1 em{color:#efbd72}
+.welcome-panel>p:not(.eyebrow){color:#c7b9aa}
+.eyebrow{color:#d4b581;letter-spacing:2px}
+.muted,.page-heading .muted,.welcome-panel>p:not(.eyebrow),.login-card>.muted{color:var(--muted)}
+.privacy-note{color:#c9b8a5}
+.privacy-note span:first-child{color:var(--gold)}
+.login-card label,.meta-fields label,.roster-form label,.tag-group-create-form label,.history-location-row label,.teacher-form label,.calendar-form label{color:#d9cabb}
+.login-card h2,.section-heading h2,.admin-card h2,.history-session-head h3,.tag-group-assignment-heading h3,.cast-directory-heading h2{color:#f6eee3}
+.login-card input,.meta-fields input,.meta-fields select,.custom-type input,.roster-form input,.teacher-form input,.calendar-form input,.history-location-row input,.history-row select,.history-row input,.tag-group-create-form input,.tag-category-row input,.chart-mode-label select{color:#f5eee4;background:#10121a;border-color:#4b4345}
+input::placeholder{color:#8f8580;opacity:1}
+.login-card input:focus,.meta-fields input:focus,.meta-fields select:focus,.custom-type input:focus,.roster-form input:focus,.teacher-form input:focus,.calendar-form input:focus,.history-location-row input:focus,.cast-search:focus-within{border-color:#e8b66d;box-shadow:0 0 0 3px #e8b66d26}
+.primary{background:linear-gradient(135deg,#f2c77f,#d99b56);color:#261b15;box-shadow:0 7px 20px #d99b561c}
+.primary:hover{background:linear-gradient(135deg,#ffdb9a,#e8ad68);color:#20150f}
+.secondary{background:#211f27;border-color:#51464a;color:#f1d7a8;box-shadow:0 3px 12px #00000020}
+.secondary:hover{background:#2a252a;border-color:#b98b60;color:#ffe3b3}
+.quiet,.text-button{color:#efc47f}
+.quiet:hover,.text-button:hover{color:#ffe0a8}
+.page-heading{border-bottom:1px solid #e5c58a1a}
+.page-heading h1{color:#f7efe5}
+.accent{color:#ed997f}
+.tabs{border-color:#e6c48c30;scrollbar-color:#745742 transparent}
+.tab{color:#b1a69e}
+.tab:hover{color:#ead3ac}
+.tab.active{color:#f2c77f;border-color:#f2c77f}
+.stat-card{background:linear-gradient(150deg,#1d1c25,#141620)}
+.stat-label{color:#c8b7a1}
+.stat-card strong{color:#f7eee1}
+.stat-card small{color:#aea39b}
+.stat-icon.green{background:#2e3b35;color:#a9d0a5}.stat-icon.coral{background:#422b30;color:#f1a08a}.stat-icon.gold{background:#403522;color:#f2ca76}.stat-icon.blue{background:#263840;color:#a3cedc}
+.overview-grid{align-items:start}
+.legend,.bar-value{color:#c5b7aa}
+.legend-late{background:#a7c88d}.legend-absent{background:#e88776}.legend-calls{background:#8cb8c5}
+.bar-track{background:#292932}.bar.late{background:#a8c98e}.bar.absent{background:#e88776}.bar.calls{background:#91bdc9}
+.recent-item{border-color:#ffffff12}.recent-item strong{color:#f3e9dc}.recent-item small{color:#b4a89c}
+.recent-tag{background:#302a24;color:#f1cc87}
+.summary-card,.chart-card,.recent-card{border-color:#ead5b21b}
+.table-wrap{border-radius:9px}
+table{background:transparent}
+th{color:#d4bd98;border-color:#ffffff20}
+td{color:#d7ccc0;border-color:#ffffff12}
+td:first-child{color:#f4ebdf}
+td:not(:first-child){color:#c6b9ad}
+.table-wrap tbody tr:hover{background:#ffffff08}
+.app-footer{color:#9e9288}
+.session-meta,.attendance-card,.roster-card,.admin-card{background:linear-gradient(145deg,#191a23f5,#13151df5)}
+.attendance-row,.history-row,.cast-row,.teacher-role-row{border-color:#ffffff16}
+.attendance-list{border-color:#ffffff20}
+.actor-info strong,.cast-main strong,.history-actor strong{color:#f3e9dc}
+.actor-info small,.cast-main small,.history-actor small{color:#b6a99e}
+.avatar{background:#3b332b;color:#f1c77c;border:1px solid #e8b66d2b}
+.tag-badge{background:#342d29;color:#efd5a5;border:1px solid #e5bc7722}
+.count-pill{background:#302a24;color:#f1cc87}
+.status-option,.bulk-actions button{background:#201f27;border-color:#49434a;color:#d2c5b8}
+.status-option:hover,.bulk-actions button:hover{border-color:#d9b16f;color:#ffdda1}
+.status-option.selected[data-status="Here"]{background:#263a30;color:#acd0a7;border-color:#507c5c}
+.status-option.selected[data-status="Late"]{background:#3c3324;color:#f1cc75;border-color:#806536}
+.status-option.selected[data-status="Absent"]{background:#40292d;color:#f1a092;border-color:#8a4d50}
+.status-option.selected[data-status="Exempt"]{background:#2b3038;color:#ccd1da;border-color:#59616e}
+.bulk-actions{color:#b5aaa0}
+.attendance-note,.attendance-name-search input,.attendance-person-choice,.attendance-people-picker{background:#11141b;border-color:#47434a;color:#eee4d8}
+.attendance-person-choice span{color:#eee4d8}.attendance-person-choice small{color:#b3a89e}
+.attendance-person-choice:has(input:checked){background:#302a21;border-color:#b48d58}
+.tag-filter-button{background:#1d1e27;border-color:#49434a;color:#ddd0c2}
+.tag-filter-button:hover,.tag-filter-button.selected,.tag-group-dropdown[open] summary{background:#302a22;border-color:#c5995d;color:#f4d08c}
+.tag-group-menu{background:#181a23;border-color:#4c4547;box-shadow:0 15px 38px #0009}
+.tag-group-option{color:#e5d8c9}.tag-group-option:hover{background:#2a2728}
+.roster-tag-group-row,.tag-category-row{background:#151720;border-color:#474148}
+.roster-tag-group-row span,.tag-category-row small,.tag-group-empty{color:#c4b8ad}
+.tag-group-create-form input,.tag-category-row input,.roster-tag-group-row select{background:#10121a;color:#f2e9dd;border-color:#4a4348}
+.tag-category-actions .remove-actor,.remove-actor{color:#efa28c}
+.attendance-filter-note,.attendance-filter-count,.search-count{color:#b6aa9f}
+.attendance-no-matches,.empty-state{color:#b9aca0}
+.sync-message{background:#38292b;border-color:#814d4c;color:#f0b1a1}
+.calendar-card,.admin-card{background:linear-gradient(145deg,#191a23f5,#13151df5)}
+.calendar-privacy-note,.calendar-toolbar p{color:#b9aca0}
+.google-calendar-frame{border-color:#51484a;background:#fff}
+.history-session-head{background:#191a23;color:#f5eee4}
+.history-session-head .session-count{color:#c6b9ad}
+.history-details{border-color:#ffffff20}
+.history-row select[data-status="Late"]{color:#f1cc75}.history-row select[data-status="Absent"]{color:#f1a092}
+.danger-button{background:#3b292b;border-color:#78474a;color:#f1a69a}.danger-button:hover:not(:disabled){background:#4a3032}
+.admin-count strong{color:#f5eee4}
+.cast-directory{margin-top:22px;padding-top:22px;border-top:1px solid #e5c58a26}
+.cast-directory-heading{display:grid;grid-template-columns:minmax(0,1fr) minmax(240px,360px);align-items:end;gap:18px}
+.cast-directory-heading h2{margin:0 0 6px;font:600 20px 'Playfair Display',serif}
+.cast-directory-heading p.muted{margin:0;font-size:11px;line-height:1.5}
+.cast-search{display:flex;align-items:center;gap:10px;min-width:0;height:44px;padding:0 13px;border:1px solid #51484a;border-radius:9px;background:#10121a;color:#f0c77f}
+.cast-search>span{font-size:23px;line-height:1}
+.cast-search input{width:100%;min-width:0;height:40px;margin:0;border:0;outline:0;background:transparent;color:#f5eee4;font:12px 'DM Sans'}
+.cast-search input:focus{outline:0;box-shadow:none}
+.search-count{min-height:15px;margin:10px 0 4px;font-size:10px}
+.summary-intro{margin:7px 0 0;font-size:11px;line-height:1.5}
+.summary-card>.section-heading{align-items:flex-end;gap:18px}
+.cast-row{gap:14px}
+.cast-row>span:last-child{display:flex;flex-shrink:0}
+button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,summary:focus-visible{outline:2px solid #f0c77f;outline-offset:3px}
+.form-message{color:#f0a194}
+.attendance-name-search,.time-toggle,.location-permission-note,.session-time-label,.admin-card>p:not(.eyebrow){color:#c6b9ad}
+.meta-fields input[readonly],.history-row input:disabled{background:#27252b;color:#aaa096}
+.history-session-head p,.history-session-head .session-count{color:#c0b3a7}
+.admin-hint,.time-toggle small{color:#b8ada2}
+@media(max-width:850px){.cast-directory-heading{grid-template-columns:1fr minmax(220px,320px)}}
+@media(max-width:600px){body{background-attachment:scroll}.app-shell{padding:0 16px}.topbar{border-color:#e6c48c28}.auth-layout{padding-bottom:22px}.welcome-panel{position:relative}.welcome-panel h1{font-size:clamp(39px,11vw,48px)}.login-card{padding:24px 21px}.page-heading{gap:14px}.page-heading h1{font-size:clamp(29px,8vw,35px)}.tabs{gap:20px}.summary-card>.section-heading{display:grid;grid-template-columns:1fr;align-items:stretch}.cast-search{width:100%}.cast-directory-heading{grid-template-columns:1fr;gap:13px}.cast-directory-heading .cast-search{grid-row:2}.cast-directory{margin-top:18px;padding-top:18px}.cast-row{align-items:flex-start}.cast-main{min-width:0}.actor-details{overflow-wrap:anywhere}.cast-row>span:last-child{gap:2px}.cast-row .remove-actor{padding:7px 5px}.tag-category-actions button{min-height:40px}.search-count{margin-top:8px}.app-footer{flex-wrap:wrap}.calendar-card{background:#171922}.history-session-head{gap:10px}.stat-card{background:linear-gradient(150deg,#1d1c25,#141620)}}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}

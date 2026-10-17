@@ -6,7 +6,7 @@
   const client = configured && window.supabase ? window.supabase.createClient(config.supabaseUrl, config.supabaseAnonKey) : null;
   const $ = (selector, root = document) => root.querySelector(selector);
   const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
-  const state = { user: null, profile: null, isRosterAdmin: false, isTeacher: false, teacherEmails: [], calendarEmbedUrl: '', rosterTagCategories: [], rosterTagGroups: new Map(), openAttendanceTagGroups: new Set(), cast: [], types: [], sessions: [], records: [], statuses: new Map(), notes: new Map(), attendanceMode: 'all', attendanceTags: new Set(), attendancePersonIds: new Set(), attendanceNameSearch: '' };
+  const state = { user: null, profile: null, isRosterAdmin: false, isTeacher: false, teacherEmails: [], calendarEmbedUrl: '', rosterTagCategories: [], rosterTagGroups: new Map(), openAttendanceTagGroups: new Set(), cast: [], types: [], sessions: [], records: [], statuses: new Map(), notes: new Map(), attendanceMode: 'all', attendanceTags: new Set(), attendancePersonIds: new Set(), attendanceNameSearch: '', rosterSearch: '', overviewSearch: '' };
   const attendanceStatusValues = ['Here', 'Late', 'Absent'];
   const historyStatusValues = [...attendanceStatusValues, 'Exempt'];
   let toastTimer;
@@ -136,6 +136,10 @@
     state.cast.flatMap(actor => normalizeTags(actor.tags)).forEach(tag => { if (!tags.has(tag.toLocaleLowerCase())) tags.set(tag.toLocaleLowerCase(), tag); });
     return [...tags.values()].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
   }
+  function castMatchesSearch(actor, query) {
+    const needle = String(query || '').trim().toLocaleLowerCase();
+    return !needle || [actor.name, actor.characters].some(value => String(value || '').toLocaleLowerCase().includes(needle));
+  }
   function castForAttendance() {
     if (state.attendanceMode === 'people') return state.cast.filter(actor => state.attendancePersonIds.has(actor.id));
     if (state.attendanceMode === 'tags' && state.attendanceTags.size) return state.cast.filter(actor => normalizeTags(actor.tags).some(tag => state.attendanceTags.has(tag.toLocaleLowerCase())));
@@ -220,7 +224,13 @@
     $('#roster-form').classList.toggle('hidden', !state.isRosterAdmin);
     $('#roster-admin-note').classList.toggle('hidden', state.isRosterAdmin);
     renderRosterTagGroups();
-    $('#cast-list').innerHTML = state.cast.length ? state.cast.map(actor => `<div class="cast-row"><div class="cast-main"><span class="avatar">${escapeHtml(actor.name.trim().split(/\s+/).map(p => p[0]).slice(0,2).join('').toUpperCase())}</span><span class="actor-details"><strong>${escapeHtml(actor.name)}</strong><small>${escapeHtml(actor.characters || 'Character not set')}</small>${tagBadges(actor.tags)}</span></div>${state.isRosterAdmin ? `<span><button class="remove-actor edit-actor" data-id="${actor.id}">Edit</button><button class="remove-actor delete-actor" data-id="${actor.id}">Remove</button></span>` : ''}</div>`).join('') : '<div class="empty-state">The cast roster is empty. Ask the production administrator to add cast members.</div>';
+    const matchingCast = state.cast.filter(actor => castMatchesSearch(actor, state.rosterSearch));
+    $('#roster-search-count').textContent = state.rosterSearch.trim()
+      ? `Showing ${matchingCast.length} of ${state.cast.length} cast members`
+      : `${state.cast.length} cast member${state.cast.length === 1 ? '' : 's'}`;
+    $('#cast-list').innerHTML = matchingCast.length ? matchingCast.map(actor => `<div class="cast-row"><div class="cast-main"><span class="avatar">${escapeHtml(actor.name.trim().split(/\s+/).map(p => p[0]).slice(0,2).join('').toUpperCase())}</span><span class="actor-details"><strong>${escapeHtml(actor.name)}</strong><small>${escapeHtml(actor.characters || 'Character not set')}</small>${tagBadges(actor.tags)}</span></div>${state.isRosterAdmin ? `<span><button class="remove-actor edit-actor" data-id="${actor.id}">Edit</button><button class="remove-actor delete-actor" data-id="${actor.id}">Remove</button></span>` : ''}</div>`).join('') : state.cast.length
+      ? '<div class="empty-state">No cast members match that name or character.</div>'
+      : '<div class="empty-state">The cast roster is empty. Ask the production administrator to add cast members.</div>';
     $$('.edit-actor').forEach(button => button.addEventListener('click', async () => {
       const actor = state.cast.find(item => item.id === button.dataset.id); if (!actor) return;
       const name = prompt('Actor name', actor.name); if (name === null) return;
@@ -341,15 +351,21 @@
     });
     const lateTotal = [...lates.values()].reduce((a,b) => a+b, 0), absentTotal = [...absents.values()].reduce((a,b) => a+b, 0);
     $('#total-lates').textContent = lateTotal; $('#total-absences').textContent = absentTotal; $('#total-sessions').textContent = state.sessions.length; $('#total-cast').textContent = state.cast.length;
-    $('#summary-body').innerHTML = state.cast.length ? state.cast.map(actor => `<tr><td>${escapeHtml(actor.name)}</td><td>${escapeHtml(actor.characters || '—')}</td><td>${lates.get(actor.id)}</td><td>${absents.get(actor.id)}</td><td>${calls.get(actor.id)}</td></tr>`).join('') : '<tr><td colspan="5" class="empty-state">Add your cast to see attendance totals.</td></tr>';
+    const matchingCast = state.cast.filter(actor => castMatchesSearch(actor, state.overviewSearch));
+    $('#overview-search-count').textContent = state.overviewSearch.trim()
+      ? `Showing ${matchingCast.length} of ${state.cast.length} cast members`
+      : `${state.cast.length} cast member${state.cast.length === 1 ? '' : 's'}`;
+    $('#summary-body').innerHTML = matchingCast.length ? matchingCast.map(actor => `<tr><td>${escapeHtml(actor.name)}</td><td>${escapeHtml(actor.characters || '—')}</td><td>${lates.get(actor.id)}</td><td>${absents.get(actor.id)}</td><td>${calls.get(actor.id)}</td></tr>`).join('') : state.cast.length
+      ? '<tr><td colspan="5" class="empty-state">No cast members match that name or character.</td></tr>'
+      : '<tr><td colspan="5" class="empty-state">Add your cast to see attendance totals.</td></tr>';
     const callMode = $('#chart-mode').value === 'calls';
-    $('#chart-title').textContent = callMode ? 'Call-ins by cast member' : 'Late vs. absent';
+    $('#chart-title').textContent = `${callMode ? 'Call-ins by cast member' : 'Late vs. absent'}${state.overviewSearch.trim() ? ' · search results' : ''}`;
     $('#chart-legend').innerHTML = callMode ? '<i class="legend-calls"></i> Called in' : '<i class="legend-late"></i> Late <i class="legend-absent"></i> Absent';
-    $('#chart').setAttribute('aria-label', callMode ? 'Call-ins by actor' : 'Late and absent totals by actor');
-    const max = Math.max(1, ...state.cast.map(actor => callMode
+    $('#chart').setAttribute('aria-label', `${callMode ? 'Call-ins by actor' : 'Late and absent totals by actor'}${state.overviewSearch.trim() ? ', filtered by student or character search' : ''}`);
+    const max = Math.max(1, ...matchingCast.map(actor => callMode
       ? calls.get(actor.id)
       : lates.get(actor.id) + absents.get(actor.id)));
-    $('#chart').innerHTML = state.cast.length ? state.cast.map(actor => {
+    $('#chart').innerHTML = matchingCast.length ? matchingCast.map(actor => {
       const late = lates.get(actor.id), absent = absents.get(actor.id), callIns = calls.get(actor.id);
       const label = callMode ? `${callIns} call-ins` : `${late} late, ${absent} absent`;
       const bars = callMode
@@ -357,7 +373,9 @@
         : `<span class="bar late" style="width:${late / max * 100}%"></span><span class="bar absent" style="width:${absent / max * 100}%"></span>`;
       const value = callMode ? `${callIns} ${callIns === 1 ? 'call-in' : 'call-ins'}` : `${late} late · ${absent} absent`;
       return `<div class="bar-group" role="group" aria-label="${escapeHtml(`${actor.name}: ${label}`)}"><span class="bar-name">${escapeHtml(actor.name)}</span><div class="bar-track ${callMode ? 'single' : ''}" aria-hidden="true">${bars}</div><span class="bar-value">${value}</span></div>`;
-    }).join('') : '<div class="empty-state">Your attendance chart will appear once you add cast members.</div>';
+    }).join('') : state.cast.length
+      ? '<div class="empty-state">No cast members match that name or character.</div>'
+      : '<div class="empty-state">Your attendance chart will appear once you add cast members.</div>';
     $('#recent-list').innerHTML = state.sessions.length ? state.sessions.slice(0, 4).map(session => `<div class="recent-item"><div><strong>${escapeHtml(session.rehearsal_type)}</strong><small>${escapeHtml(new Date(`${session.rehearsal_date}T12:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }))}${session.rehearsal_time ? ` · ${escapeHtml(formatTime(session.rehearsal_time))}` : ''} · ${escapeHtml(session.taker)}</small></div><span class="recent-tag">${recordsFor(session.id).filter(record => record.status !== 'Exempt').length} called</span></div>`).join('') : '<div class="empty-state">No rehearsals saved yet.</div>';
   }
   function renderAdmin() {
@@ -394,6 +412,8 @@
   }
 
   $$('.tab').forEach(tab => tab.addEventListener('click', () => gotoPage(tab.dataset.page)));
+  $('#roster-cast-search').addEventListener('input', event => { state.rosterSearch = event.currentTarget.value; renderRoster(); });
+  $('#overview-cast-search').addEventListener('input', event => { state.overviewSearch = event.currentTarget.value; renderOverview(); });
   $$('[data-goto]').forEach(button => button.addEventListener('click', () => gotoPage(button.dataset.goto)));
   $$('.bulk-actions button').forEach(button => button.addEventListener('click', () => { castForAttendance().forEach(actor => { state.statuses.set(actor.id, button.dataset.bulk); if (!['Late', 'Absent'].includes(button.dataset.bulk)) state.notes.delete(actor.id); }); renderAttendance(); }));
   $('#chart-mode').addEventListener('change', renderOverview);
