@@ -6,7 +6,7 @@ A mobile-friendly attendance tracker for rehearsal teams. It runs as a static si
 
 - One shared cast roster; multiple characters are stored together on each actor.
 - Here, Late, and Absent statuses, with bulk actions and a date helper.
-- Shared roster tags such as Ensemble, Soloist, and Main character. The production administrator can create, rename, and delete custom tag groups, assign tags to them, and attendance takers can filter by one or more grouped tags or select cast members by name without changing saved tags.
+- Shared roster tags such as Ensemble, Soloist, and Main character. The production administrator can create, rename, and delete custom tag groups, assign tags to them, bulk-add a tag to people found by name/character or an existing tag, and attendance takers can filter by one or more grouped tags or select cast members by name without changing saved tags.
 - Any authorized team member can search the roster or overview by student or character name. The roster shows each match's tags; the overview shows matching absence, lateness, and call-in totals.
 - Music, Full Cast, and Scene(s) built-in types, plus custom types.
 - Confirmed rehearsal saves, duplicate date/type review, attendance notes, and editable history.

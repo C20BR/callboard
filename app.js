@@ -6,7 +6,7 @@
   const client = configured && window.supabase ? window.supabase.createClient(config.supabaseUrl, config.supabaseAnonKey) : null;
   const $ = (selector, root = document) => root.querySelector(selector);
   const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
-  const state = { user: null, profile: null, isRosterAdmin: false, isTeacher: false, teacherEmails: [], calendarEmbedUrl: '', rosterTagCategories: [], rosterTagGroups: new Map(), openAttendanceTagGroups: new Set(), cast: [], types: [], sessions: [], records: [], statuses: new Map(), notes: new Map(), attendanceMode: 'all', attendanceTags: new Set(), attendancePersonIds: new Set(), attendanceNameSearch: '', rosterSearch: '', overviewSearch: '' };
+  const state = { user: null, profile: null, isRosterAdmin: false, isTeacher: false, teacherEmails: [], calendarEmbedUrl: '', rosterTagCategories: [], rosterTagGroups: new Map(), openAttendanceTagGroups: new Set(), cast: [], types: [], sessions: [], records: [], statuses: new Map(), notes: new Map(), attendanceMode: 'all', attendanceTags: new Set(), attendancePersonIds: new Set(), attendanceNameSearch: '', rosterSearch: '', overviewSearch: '', bulkTagPersonSearch: '', bulkTagSourceFilter: '', bulkTagSelectedIds: new Set() };
   const attendanceStatusValues = ['Here', 'Late', 'Absent'];
   const historyStatusValues = [...attendanceStatusValues, 'Exempt'];
   let toastTimer;
@@ -149,6 +149,25 @@
     const values = normalizeTags(tags);
     return values.length ? `<span class="tag-badges">${values.map(tag => `<span class="tag-badge">${escapeHtml(tag)}</span>`).join('')}</span>` : '';
   }
+  function renderBulkTagAssignment() {
+    const panel = $('#bulk-tag-panel'), sourceFilter = $('#bulk-tag-source-filter'), options = $('#bulk-tag-options'), list = $('#bulk-tag-people');
+    panel.classList.toggle('hidden', !state.isRosterAdmin);
+    if (!state.isRosterAdmin) return;
+    const tags = allRosterTags(), previousFilter = state.bulkTagSourceFilter;
+    const validIds = new Set(state.cast.map(actor => actor.id));
+    state.bulkTagSelectedIds = new Set([...state.bulkTagSelectedIds].filter(id => validIds.has(id)));
+    sourceFilter.innerHTML = `<option value="">Any existing tags</option>${tags.map(tag => `<option value="${escapeHtml(tag.toLocaleLowerCase())}">${escapeHtml(tag)}</option>`).join('')}`;
+    sourceFilter.value = tags.some(tag => tag.toLocaleLowerCase() === previousFilter) ? previousFilter : '';
+    state.bulkTagSourceFilter = sourceFilter.value;
+    options.innerHTML = tags.map(tag => `<option value="${escapeHtml(tag)}"></option>`).join('');
+    const matches = state.cast.filter(actor => castMatchesSearch(actor, state.bulkTagPersonSearch) && (!state.bulkTagSourceFilter || normalizeTags(actor.tags).some(tag => tag.toLocaleLowerCase() === state.bulkTagSourceFilter))).sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+    $('#bulk-tag-match-count').textContent = `${matches.length} matching ${matches.length === 1 ? 'person' : 'people'} · ${state.bulkTagSelectedIds.size} selected`;
+    list.innerHTML = matches.length ? matches.map(actor => `<label class="bulk-tag-person"><input type="checkbox" data-bulk-person="${escapeHtml(actor.id)}" ${state.bulkTagSelectedIds.has(actor.id) ? 'checked' : ''}><span><strong>${escapeHtml(actor.name)}</strong><small>${escapeHtml(actor.characters || 'Character not set')}</small></span>${tagBadges(actor.tags)}</label>`).join('') : '<p class="empty-state">No cast members match these filters.</p>';
+    $$('[data-bulk-person]', list).forEach(input => input.addEventListener('change', () => {
+      if (input.checked) state.bulkTagSelectedIds.add(input.dataset.bulkPerson); else state.bulkTagSelectedIds.delete(input.dataset.bulkPerson);
+      renderBulkTagAssignment();
+    }));
+  }
   function statusFor(id) { return state.statuses.get(id) || 'Here'; }
   function renderAttendancePeople() {
     const choices = $('#attendance-people-choices');
@@ -223,6 +242,7 @@
   function renderRoster() {
     $('#roster-form').classList.toggle('hidden', !state.isRosterAdmin);
     $('#roster-admin-note').classList.toggle('hidden', state.isRosterAdmin);
+    renderBulkTagAssignment();
     renderRosterTagGroups();
     const matchingCast = state.cast.filter(actor => castMatchesSearch(actor, state.rosterSearch));
     $('#roster-search-count').textContent = state.rosterSearch.trim()
@@ -458,6 +478,37 @@
     event.preventDefault(); const name = $('#actor-name').value.trim(), characters = $('#actor-characters').value.trim(), tags = normalizeTags($('#actor-tags').value); if (!name) return;
     const { error } = await client.from('cast_members').insert({ name, characters, tags });
     if (error) toast(errorMessage(error)); else { $('#roster-form').reset(); toast('Cast member added to the shared roster.'); await loadData(); }
+  });
+  $('#bulk-tag-person-search').addEventListener('input', event => { state.bulkTagPersonSearch = event.currentTarget.value; renderBulkTagAssignment(); });
+  $('#bulk-tag-source-filter').addEventListener('change', event => { state.bulkTagSourceFilter = event.currentTarget.value; renderBulkTagAssignment(); });
+  $('#bulk-tag-select-matches').addEventListener('click', () => {
+    if (!state.isRosterAdmin) return;
+    const query = state.bulkTagPersonSearch;
+    state.cast.filter(actor => castMatchesSearch(actor, query) && (!state.bulkTagSourceFilter || normalizeTags(actor.tags).some(tag => tag.toLocaleLowerCase() === state.bulkTagSourceFilter))).forEach(actor => state.bulkTagSelectedIds.add(actor.id));
+    renderBulkTagAssignment();
+  });
+  $('#bulk-tag-clear-selection').addEventListener('click', () => { state.bulkTagSelectedIds.clear(); renderBulkTagAssignment(); });
+  $('#bulk-tag-form').addEventListener('submit', async event => {
+    event.preventDefault();
+    if (!state.isRosterAdmin) return;
+    const tag = normalizeTags($('#bulk-tag-target').value)[0], selected = state.cast.filter(actor => state.bulkTagSelectedIds.has(actor.id));
+    if (!tag) { $('#bulk-tag-target').focus(); return; }
+    if (!selected.length) { toast('Select at least one person first.'); return; }
+    const submit = $('button[type="submit"]', event.currentTarget); submit.disabled = true;
+    const results = await Promise.all(selected.map(async actor => {
+      const existing = normalizeTags(actor.tags);
+      if (existing.some(value => value.toLocaleLowerCase() === tag.toLocaleLowerCase())) return { actor, unchanged: true };
+      const { error } = await client.from('cast_members').update({ tags: normalizeTags([...existing, tag]) }).eq('id', actor.id);
+      return { actor, error };
+    }));
+    submit.disabled = false;
+    const successful = results.filter(result => !result.error);
+    successful.forEach(result => state.bulkTagSelectedIds.delete(result.actor.id));
+    const failed = results.filter(result => result.error);
+    if (failed.length) toast(`${successful.length} updated; ${failed.length} could not be updated. ${errorMessage(failed[0].error)}`);
+    else toast(`${successful.length} ${successful.length === 1 ? 'person' : 'people'} ${successful.length === 1 ? 'has' : 'have'} the “${tag}” tag now.`);
+    await loadData();
+    if (!failed.length) $('#bulk-tag-form').reset();
   });
   $('#session-form').addEventListener('submit', async event => {
     event.preventDefault(); const attendanceCast = castForAttendance(); if (!attendanceCast.length) { toast(state.attendanceMode === 'people' ? 'Choose at least one person by name before saving.' : state.cast.length ? 'Choose at least one tag with cast members, or select Everyone.' : 'Add cast members before saving a rehearsal.'); return; }
