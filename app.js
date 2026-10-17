@@ -6,7 +6,7 @@
   const client = configured && window.supabase ? window.supabase.createClient(config.supabaseUrl, config.supabaseAnonKey) : null;
   const $ = (selector, root = document) => root.querySelector(selector);
   const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
-  const state = { user: null, profile: null, isRosterAdmin: false, isTeacher: false, teacherEmails: [], calendarEmbedUrl: '', cast: [], types: [], sessions: [], records: [], statuses: new Map(), notes: new Map(), attendanceMode: 'all', attendanceTags: new Set(), attendancePersonIds: new Set(), attendanceNameSearch: '' };
+  const state = { user: null, profile: null, isRosterAdmin: false, isTeacher: false, teacherEmails: [], calendarEmbedUrl: '', rosterTagGroups: new Map(), openAttendanceTagGroups: new Set(), cast: [], types: [], sessions: [], records: [], statuses: new Map(), notes: new Map(), attendanceMode: 'all', attendanceTags: new Set(), attendancePersonIds: new Set(), attendanceNameSearch: '' };
   const attendanceStatusValues = ['Here', 'Late', 'Absent'];
   const historyStatusValues = [...attendanceStatusValues, 'Exempt'];
   let toastTimer;
@@ -47,17 +47,19 @@
       client.from('rehearsal_types').select('*').order('is_builtin', { ascending: false }).order('name'),
       client.from('rehearsal_sessions').select('*').order('rehearsal_date', { ascending: false }).order('created_at', { ascending: false }),
       client.from('attendance_records').select('*, cast_members(id,name,characters)'),
-      client.from('callboard_settings').select('google_calendar_embed_url').eq('id', 'global').maybeSingle()
+      client.from('callboard_settings').select('google_calendar_embed_url').eq('id', 'global').maybeSingle(),
+      client.from('roster_tag_groups').select('tag_key,group_name')
     ]);
     const failedIndex = results.findIndex(result => result.error);
     if (failedIndex !== -1) {
-      const sections = ['cast roster', 'rehearsal types', 'rehearsal history', 'attendance details', 'calendar settings'];
+      const sections = ['cast roster', 'rehearsal types', 'rehearsal history', 'attendance details', 'calendar settings', 'attendance tag groups'];
       const message = `Could not load ${sections[failedIndex]}: ${errorMessage(results[failedIndex].error)}`;
       $('#sync-message').textContent = `${message} A saved rehearsal may be in Supabase even if it is not visible here yet.`;
       $('#sync-message').classList.remove('hidden'); toast(message); setConnection(false, 'Sync problem'); return false;
     }
     [state.cast, state.types, state.sessions, state.records] = results.map(result => result.data || []);
     state.calendarEmbedUrl = results[4].data?.google_calendar_embed_url || '';
+    state.rosterTagGroups = new Map((results[5].data || []).map(item => [item.tag_key, item.group_name]));
     const [adminResult, teacherResult] = await Promise.all([
       client.rpc('is_callboard_roster_admin'),
       client.rpc('is_callboard_teacher')
@@ -160,15 +162,29 @@
     if (state.attendanceMode === 'tags' && !state.attendanceTags.size) state.attendanceMode = 'all';
     const validIds = new Set(state.cast.map(actor => actor.id));
     state.attendancePersonIds = new Set([...state.attendancePersonIds].filter(id => validIds.has(id)));
-    filter.innerHTML = `<div class="tag-filter-buttons"><button type="button" class="tag-filter-button ${state.attendanceMode === 'all' ? 'selected' : ''}" data-tag-all aria-pressed="${state.attendanceMode === 'all'}">Everyone</button>${tags.map(tag => {
-      const key = tag.toLocaleLowerCase(), selected = state.attendanceMode === 'tags' && state.attendanceTags.has(key);
-      return `<button type="button" class="tag-filter-button ${selected ? 'selected' : ''}" data-tag="${escapeHtml(key)}" aria-pressed="${selected}">${escapeHtml(tag)}</button>`;
-    }).join('')}<button type="button" class="tag-filter-button ${state.attendanceMode === 'people' ? 'selected' : ''}" data-tag-people aria-pressed="${state.attendanceMode === 'people'}">Choose by name</button></div><p class="attendance-filter-note">${state.attendanceMode === 'people' ? 'Select any combination of cast members for this attendance sheet. This temporary selection does not change their saved roster tags.' : state.attendanceMode === 'tags' ? 'Choose one or more tags; a person is included if they have any selected tag.' : 'Everyone on the shared roster is included.'} People outside the selection will not be saved on this attendance sheet.</p>${state.attendanceMode === 'people' ? '<div class="attendance-people-picker"><label class="attendance-name-search">Find a cast member<input id="attendance-name-search" type="search" autocomplete="off" placeholder="Search names" value="' + escapeHtml(state.attendanceNameSearch) + '"></label><div id="attendance-people-choices" class="attendance-people-choices"></div></div>' : ''}`;
+    const tagGroups = new Map([['Song', []], ['Scene', []], ['Other', []]]);
+    tags.forEach(tag => {
+      const key = tag.toLocaleLowerCase(), savedGroup = state.rosterTagGroups.get(key);
+      tagGroups.get(['Song', 'Scene', 'Other'].includes(savedGroup) ? savedGroup : 'Other').push(tag);
+    });
+    const groupLabels = { Song: 'Songs', Scene: 'Scenes', Other: 'Other tags' };
+    const groupedMenus = [...tagGroups].filter(([, values]) => values.length).map(([group, groupTags]) => {
+      const selectedCount = groupTags.filter(tag => state.attendanceMode === 'tags' && state.attendanceTags.has(tag.toLocaleLowerCase())).length;
+      return `<details class="tag-group-dropdown" data-tag-group-menu="${group}" ${state.openAttendanceTagGroups.has(group) ? 'open' : ''}><summary class="tag-filter-button ${selectedCount ? 'selected' : ''}">${groupLabels[group]}${selectedCount ? ` <span>${selectedCount}</span>` : ''}<span aria-hidden="true">⌄</span></summary><div class="tag-group-menu" role="group" aria-label="${groupLabels[group]}">${groupTags.map(tag => {
+        const key = tag.toLocaleLowerCase(), selected = state.attendanceMode === 'tags' && state.attendanceTags.has(key);
+        return `<label class="tag-group-option"><input type="checkbox" data-tag="${escapeHtml(key)}" ${selected ? 'checked' : ''}><span>${escapeHtml(tag)}</span></label>`;
+      }).join('')}</div></details>`;
+    }).join('');
+    filter.innerHTML = `<div class="tag-filter-buttons"><button type="button" class="tag-filter-button ${state.attendanceMode === 'all' ? 'selected' : ''}" data-tag-all aria-pressed="${state.attendanceMode === 'all'}">Everyone</button>${groupedMenus}<button type="button" class="tag-filter-button ${state.attendanceMode === 'people' ? 'selected' : ''}" data-tag-people aria-pressed="${state.attendanceMode === 'people'}">Choose by name</button></div><p class="attendance-filter-note">${state.attendanceMode === 'people' ? 'Select any combination of cast members for this attendance sheet. This temporary selection does not change their saved roster tags.' : state.attendanceMode === 'tags' ? 'Choose one or more tags; a person is included if they have any selected tag.' : tags.length ? 'Everyone on the shared roster is included.' : 'Add tags in Cast roster to filter attendance by group.'} People outside the selection will not be saved on this attendance sheet.</p>${state.attendanceMode === 'people' ? '<div class="attendance-people-picker"><label class="attendance-name-search">Find a cast member<input id="attendance-name-search" type="search" autocomplete="off" placeholder="Search names" value="' + escapeHtml(state.attendanceNameSearch) + '"></label><div id="attendance-people-choices" class="attendance-people-choices"></div></div>' : ''}`;
+    $$('[data-tag-group-menu]', filter).forEach(menu => menu.addEventListener('toggle', () => {
+      const group = menu.dataset.tagGroupMenu;
+      if (menu.open) state.openAttendanceTagGroups.add(group); else state.openAttendanceTagGroups.delete(group);
+    }));
     $('[data-tag-all]', filter).addEventListener('click', () => { state.attendanceMode = 'all'; state.attendanceTags.clear(); renderAttendance(); });
-    $$('[data-tag]', filter).forEach(button => button.addEventListener('click', () => {
-      const tag = button.dataset.tag;
+    $$('[data-tag]', filter).forEach(input => input.addEventListener('change', () => {
+      const tag = input.dataset.tag;
       if (state.attendanceMode !== 'tags') { state.attendanceMode = 'tags'; state.attendanceTags.clear(); }
-      if (state.attendanceTags.has(tag)) state.attendanceTags.delete(tag); else state.attendanceTags.add(tag);
+      if (input.checked) state.attendanceTags.add(tag); else state.attendanceTags.delete(tag);
       if (!state.attendanceTags.size) state.attendanceMode = 'all';
       renderAttendance();
     }));
@@ -201,6 +217,7 @@
   function renderRoster() {
     $('#roster-form').classList.toggle('hidden', !state.isRosterAdmin);
     $('#roster-admin-note').classList.toggle('hidden', state.isRosterAdmin);
+    renderRosterTagGroups();
     $('#cast-list').innerHTML = state.cast.length ? state.cast.map(actor => `<div class="cast-row"><div class="cast-main"><span class="avatar">${escapeHtml(actor.name.trim().split(/\s+/).map(p => p[0]).slice(0,2).join('').toUpperCase())}</span><span class="actor-details"><strong>${escapeHtml(actor.name)}</strong><small>${escapeHtml(actor.characters || 'Character not set')}</small>${tagBadges(actor.tags)}</span></div>${state.isRosterAdmin ? `<span><button class="remove-actor edit-actor" data-id="${actor.id}">Edit</button><button class="remove-actor delete-actor" data-id="${actor.id}">Remove</button></span>` : ''}</div>`).join('') : '<div class="empty-state">The cast roster is empty. Ask the production administrator to add cast members.</div>';
     $$('.edit-actor').forEach(button => button.addEventListener('click', async () => {
       const actor = state.cast.find(item => item.id === button.dataset.id); if (!actor) return;
@@ -215,6 +232,25 @@
       if (!confirm(`Remove ${actor.name} from the shared roster? This actor cannot be removed while attendance records refer to them.`)) return;
       const { error } = await client.from('cast_members').delete().eq('id', actor.id);
       if (error) toast(error.message.includes('foreign key') ? 'This actor has saved attendance and must remain on the roster.' : errorMessage(error)); else { toast('Cast member removed.'); await loadData(); }
+    }));
+  }
+  function renderRosterTagGroups() {
+    const panel = $('#roster-tag-organizer'), list = $('#roster-tag-group-list');
+    panel.classList.toggle('hidden', !state.isRosterAdmin);
+    if (!state.isRosterAdmin) { list.innerHTML = ''; return; }
+    const tags = allRosterTags();
+    list.innerHTML = tags.length ? tags.map(tag => {
+      const key = tag.toLocaleLowerCase(), group = state.rosterTagGroups.get(key) || 'Other';
+      return `<label class="roster-tag-group-row"><span>${escapeHtml(tag)}</span><select data-roster-tag-group="${escapeHtml(key)}" aria-label="Group for ${escapeHtml(tag)}"><option value="Other" ${group === 'Other' ? 'selected' : ''}>Other</option><option value="Song" ${group === 'Song' ? 'selected' : ''}>Songs</option><option value="Scene" ${group === 'Scene' ? 'selected' : ''}>Scenes</option></select></label>`;
+    }).join('') : '<p class="tag-group-empty">Add attendance tags to the cast roster. Then you can place each tag under Songs, Scenes, or Other.</p>';
+    $$('[data-roster-tag-group]', list).forEach(select => select.addEventListener('change', async () => {
+      const key = select.dataset.rosterTagGroup, group = select.value;
+      select.disabled = true;
+      const { error } = await client.from('roster_tag_groups').upsert({ tag_key: key, group_name: group, updated_at: new Date().toISOString() }, { onConflict: 'tag_key' });
+      if (error) { toast(errorMessage(error)); await loadData(); return; }
+      state.rosterTagGroups.set(key, group);
+      toast(`Tag grouped under ${group === 'Other' ? 'Other' : `${group}s`}.`);
+      renderAttendance(); renderRosterTagGroups();
     }));
   }
   function recordsFor(sessionId) { return state.records.filter(record => record.session_id === sessionId); }
