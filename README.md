@@ -6,7 +6,7 @@ A mobile-friendly attendance tracker for rehearsal teams. It runs as a static si
 
 - One shared cast roster; multiple characters are stored together on each actor.
 - Here, Late, and Absent statuses, with bulk actions and a date helper.
-- Shared roster tags such as Ensemble, Soloist, and Main character. The production administrator can group each tag under Songs, Scenes, or Other; attendance takers can filter by one or more grouped tags or select cast members by name without changing saved tags.
+- Shared roster tags such as Ensemble, Soloist, and Main character. The production administrator can create, rename, and delete custom tag groups, assign tags to them, and attendance takers can filter by one or more grouped tags or select cast members by name without changing saved tags.
 - Music, Full Cast, and Scene(s) built-in types, plus custom types.
 - Confirmed rehearsal saves, duplicate date/type review, attendance notes, and editable history.
 - Corrections update the underlying attendance record, so late, absence, and call-in totals stay synchronized.
@@ -30,10 +30,11 @@ Call-ins count one Here, Late, or Absent attendance record per person per rehear
 5. In the SQL Editor, run [`supabase/migration_security_advisor.sql`](supabase/migration_security_advisor.sql). This changes the authorization helpers to run with caller permissions and restricts the admin-status lookup to the signed-in user's own email. It does not change rehearsal, attendance, or cast records.
 6. In the SQL Editor, run [`supabase/migration_roster_tags.sql`](supabase/migration_roster_tags.sql). It adds an empty tags field to each existing cast member without changing roster or attendance data.
 7. In the SQL Editor, run [`supabase/migration_teacher_roles_and_locations.sql`](supabase/migration_teacher_roles_and_locations.sql). Existing accounts stay stage managers; it adds blank location fields and the calendar setting without changing attendance or assigning anyone elevated access.
-8. In the SQL Editor, run [`supabase/migration_invite_allowlist_and_tag_groups.sql`](supabase/migration_invite_allowlist_and_tag_groups.sql). It adds the admin-managed tag groups and automatically adds newly invited accounts to Callboard's allowlist. It does not change existing cast or attendance data.
-9. In **Authentication → Providers → Email**, disable public sign-ups. Keep email/password sign-in enabled.
-10. In **Authentication → URL Configuration**, set Site URL and add the GitHub Pages site URL to the allowed redirect URLs (including the site root).
-11. Invite each production team member under **Authentication → Users**. New dashboard invitations are automatically added to `public.authorized_users` by the migration, so you no longer need to add the same email manually. The invited person opens the email link at Callboard and chooses a username and password. Only invited accounts can read production data; never enable public sign-ups for this project.
+8. In the SQL Editor, run [`supabase/migration_invite_allowlist_and_tag_groups.sql`](supabase/migration_invite_allowlist_and_tag_groups.sql). It adds tag-assignment storage and automatically adds newly invited accounts to Callboard's allowlist. It does not change existing cast or attendance data.
+9. In the SQL Editor, run [`supabase/migration_custom_tag_groups.sql`](supabase/migration_custom_tag_groups.sql). It allows the production administrator to create, rename, and delete tag groups in Callboard. Existing tags and attendance records stay in place; old fixed-group assignments become unassigned.
+10. In **Authentication → Providers → Email**, disable public sign-ups. Keep email/password sign-in enabled.
+11. In **Authentication → URL Configuration**, set Site URL and add the GitHub Pages site URL to the allowed redirect URLs (including the site root).
+12. Invite each production team member under **Authentication → Users**. New dashboard invitations are automatically added to `public.authorized_users` by the migration, so you no longer need to add the same email manually. The invited person opens the email link at Callboard and chooses a username and password. Only invited accounts can read production data; never enable public sign-ups for this project.
 
    Accounts invited before this migration are not automatically backfilled. If an existing invited account is missing from the allowlist, add just that account once from the SQL Editor, in lowercase:
 
@@ -42,7 +43,7 @@ Call-ins count one Here, Late, or Absent attendance record per person per rehear
    ```
 
    Do not grant team members SQL Editor or project-owner access unless they need database administration.
-12. Add only the production administrator's email to `public.callboard_roster_admins`, in lowercase. Run this in SQL Editor after inviting that person:
+13. Add only the production administrator's email to `public.callboard_roster_admins`, in lowercase. Run this in SQL Editor after inviting that person:
 
    ```sql
    insert into public.callboard_roster_admins (email)
@@ -52,8 +53,8 @@ Call-ins count one Here, Late, or Absent attendance record per person per rehear
 
    Do not add teachers to this table. Other authorized users can take attendance and see the shared roster but cannot change its cast members. The admin table is separate from the general authorized-user allowlist.
 
-13. After deployment, sign in as the production administrator and use **Admin → Teacher roles** to assign teacher access to each teacher's exact sign-in email. The email must already have a Supabase invitation. Remove the role there to return someone to stage-manager permissions.
-14. To connect a Google Calendar, open its settings on a computer, choose **Integrate calendar**, and copy the calendar's embed URL (the `src` address in the embed code). In Callboard, open **Admin → Google Calendar** and paste that URL. Set sharing in Google Calendar before connecting it: a private calendar requires each viewer to have Google access, while a public calendar may be visible to anyone. Callboard sign-in does not also sign the viewer in to Google. The embed is read-only; attendance takers check it for the call, then save attendance separately in Callboard.
+14. After deployment, sign in as the production administrator and use **Admin → Teacher roles** to assign teacher access to each teacher's exact sign-in email. The email must already have a Supabase invitation. Remove the role there to return someone to stage-manager permissions.
+15. To connect a Google Calendar, open its settings on a computer, choose **Integrate calendar**, and copy the calendar's embed URL (the `src` address in the embed code). In Callboard, open **Admin → Google Calendar** and paste that URL. Set sharing in Google Calendar before connecting it: a private calendar requires each viewer to have Google access, while a public calendar may be visible to anyone. Callboard sign-in does not also sign the viewer in to Google. The embed is read-only; attendance takers check it for the call, then save attendance separately in Callboard.
 
 ## 2. Configure GitHub Pages
 

@@ -6,7 +6,7 @@
   const client = configured && window.supabase ? window.supabase.createClient(config.supabaseUrl, config.supabaseAnonKey) : null;
   const $ = (selector, root = document) => root.querySelector(selector);
   const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
-  const state = { user: null, profile: null, isRosterAdmin: false, isTeacher: false, teacherEmails: [], calendarEmbedUrl: '', rosterTagGroups: new Map(), openAttendanceTagGroups: new Set(), cast: [], types: [], sessions: [], records: [], statuses: new Map(), notes: new Map(), attendanceMode: 'all', attendanceTags: new Set(), attendancePersonIds: new Set(), attendanceNameSearch: '' };
+  const state = { user: null, profile: null, isRosterAdmin: false, isTeacher: false, teacherEmails: [], calendarEmbedUrl: '', rosterTagCategories: [], rosterTagGroups: new Map(), openAttendanceTagGroups: new Set(), cast: [], types: [], sessions: [], records: [], statuses: new Map(), notes: new Map(), attendanceMode: 'all', attendanceTags: new Set(), attendancePersonIds: new Set(), attendanceNameSearch: '' };
   const attendanceStatusValues = ['Here', 'Late', 'Absent'];
   const historyStatusValues = [...attendanceStatusValues, 'Exempt'];
   let toastTimer;
@@ -48,11 +48,12 @@
       client.from('rehearsal_sessions').select('*').order('rehearsal_date', { ascending: false }).order('created_at', { ascending: false }),
       client.from('attendance_records').select('*, cast_members(id,name,characters)'),
       client.from('callboard_settings').select('google_calendar_embed_url').eq('id', 'global').maybeSingle(),
-      client.from('roster_tag_groups').select('tag_key,group_name')
+      client.from('roster_tag_groups').select('tag_key,group_name'),
+      client.from('roster_tag_categories').select('name')
     ]);
     const failedIndex = results.findIndex(result => result.error);
     if (failedIndex !== -1) {
-      const sections = ['cast roster', 'rehearsal types', 'rehearsal history', 'attendance details', 'calendar settings', 'attendance tag groups'];
+      const sections = ['cast roster', 'rehearsal types', 'rehearsal history', 'attendance details', 'calendar settings', 'attendance tag assignments', 'attendance tag groups'];
       const message = `Could not load ${sections[failedIndex]}: ${errorMessage(results[failedIndex].error)}`;
       $('#sync-message').textContent = `${message} A saved rehearsal may be in Supabase even if it is not visible here yet.`;
       $('#sync-message').classList.remove('hidden'); toast(message); setConnection(false, 'Sync problem'); return false;
@@ -60,6 +61,7 @@
     [state.cast, state.types, state.sessions, state.records] = results.map(result => result.data || []);
     state.calendarEmbedUrl = results[4].data?.google_calendar_embed_url || '';
     state.rosterTagGroups = new Map((results[5].data || []).map(item => [item.tag_key, item.group_name]));
+    state.rosterTagCategories = (results[6].data || []).map(item => item.name).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
     const [adminResult, teacherResult] = await Promise.all([
       client.rpc('is_callboard_roster_admin'),
       client.rpc('is_callboard_teacher')
@@ -162,20 +164,20 @@
     if (state.attendanceMode === 'tags' && !state.attendanceTags.size) state.attendanceMode = 'all';
     const validIds = new Set(state.cast.map(actor => actor.id));
     state.attendancePersonIds = new Set([...state.attendancePersonIds].filter(id => validIds.has(id)));
-    const tagGroups = new Map([['Song', []], ['Scene', []], ['Other', []]]);
+    const tagGroups = new Map(state.rosterTagCategories.map(group => [group, []]));
     tags.forEach(tag => {
       const key = tag.toLocaleLowerCase(), savedGroup = state.rosterTagGroups.get(key);
-      tagGroups.get(['Song', 'Scene', 'Other'].includes(savedGroup) ? savedGroup : 'Other').push(tag);
+      if (tagGroups.has(savedGroup)) tagGroups.get(savedGroup).push(tag);
     });
-    const groupLabels = { Song: 'Songs', Scene: 'Scenes', Other: 'Other tags' };
     const groupedMenus = [...tagGroups].filter(([, values]) => values.length).map(([group, groupTags]) => {
       const selectedCount = groupTags.filter(tag => state.attendanceMode === 'tags' && state.attendanceTags.has(tag.toLocaleLowerCase())).length;
-      return `<details class="tag-group-dropdown" data-tag-group-menu="${group}" ${state.openAttendanceTagGroups.has(group) ? 'open' : ''}><summary class="tag-filter-button ${selectedCount ? 'selected' : ''}">${groupLabels[group]}${selectedCount ? ` <span>${selectedCount}</span>` : ''}<span aria-hidden="true">⌄</span></summary><div class="tag-group-menu" role="group" aria-label="${groupLabels[group]}">${groupTags.map(tag => {
+      return `<details class="tag-group-dropdown" data-tag-group-menu="${escapeHtml(group)}" ${state.openAttendanceTagGroups.has(group) ? 'open' : ''}><summary class="tag-filter-button ${selectedCount ? 'selected' : ''}">${escapeHtml(group)}${selectedCount ? ` <span>${selectedCount}</span>` : ''}<span aria-hidden="true">⌄</span></summary><div class="tag-group-menu" role="group" aria-label="${escapeHtml(group)}">${groupTags.map(tag => {
         const key = tag.toLocaleLowerCase(), selected = state.attendanceMode === 'tags' && state.attendanceTags.has(key);
         return `<label class="tag-group-option"><input type="checkbox" data-tag="${escapeHtml(key)}" ${selected ? 'checked' : ''}><span>${escapeHtml(tag)}</span></label>`;
       }).join('')}</div></details>`;
     }).join('');
-    filter.innerHTML = `<div class="tag-filter-buttons"><button type="button" class="tag-filter-button ${state.attendanceMode === 'all' ? 'selected' : ''}" data-tag-all aria-pressed="${state.attendanceMode === 'all'}">Everyone</button>${groupedMenus}<button type="button" class="tag-filter-button ${state.attendanceMode === 'people' ? 'selected' : ''}" data-tag-people aria-pressed="${state.attendanceMode === 'people'}">Choose by name</button></div><p class="attendance-filter-note">${state.attendanceMode === 'people' ? 'Select any combination of cast members for this attendance sheet. This temporary selection does not change their saved roster tags.' : state.attendanceMode === 'tags' ? 'Choose one or more tags; a person is included if they have any selected tag.' : tags.length ? 'Everyone on the shared roster is included.' : 'Add tags in Cast roster to filter attendance by group.'} People outside the selection will not be saved on this attendance sheet.</p>${state.attendanceMode === 'people' ? '<div class="attendance-people-picker"><label class="attendance-name-search">Find a cast member<input id="attendance-name-search" type="search" autocomplete="off" placeholder="Search names" value="' + escapeHtml(state.attendanceNameSearch) + '"></label><div id="attendance-people-choices" class="attendance-people-choices"></div></div>' : ''}`;
+    const hasGroupedTags = [...tagGroups.values()].some(groupTags => groupTags.length);
+    filter.innerHTML = `<div class="tag-filter-buttons"><button type="button" class="tag-filter-button ${state.attendanceMode === 'all' ? 'selected' : ''}" data-tag-all aria-pressed="${state.attendanceMode === 'all'}">Everyone</button>${groupedMenus}<button type="button" class="tag-filter-button ${state.attendanceMode === 'people' ? 'selected' : ''}" data-tag-people aria-pressed="${state.attendanceMode === 'people'}">Choose by name</button></div><p class="attendance-filter-note">${state.attendanceMode === 'people' ? 'Select any combination of cast members for this attendance sheet. This temporary selection does not change their saved roster tags.' : state.attendanceMode === 'tags' ? 'Choose one or more tags; a person is included if they have any selected tag.' : tags.length && !hasGroupedTags ? 'Create tag groups in Cast roster and assign tags to make them available as attendance filters.' : tags.length ? 'Everyone on the shared roster is included.' : 'Add tags in Cast roster, then create groups to filter attendance by tag.'} People outside the selection will not be saved on this attendance sheet.</p>${state.attendanceMode === 'people' ? '<div class="attendance-people-picker"><label class="attendance-name-search">Find a cast member<input id="attendance-name-search" type="search" autocomplete="off" placeholder="Search names" value="' + escapeHtml(state.attendanceNameSearch) + '"></label><div id="attendance-people-choices" class="attendance-people-choices"></div></div>' : ''}`;
     $$('[data-tag-group-menu]', filter).forEach(menu => menu.addEventListener('toggle', () => {
       const group = menu.dataset.tagGroupMenu;
       if (menu.open) state.openAttendanceTagGroups.add(group); else state.openAttendanceTagGroups.delete(group);
@@ -235,21 +237,61 @@
     }));
   }
   function renderRosterTagGroups() {
-    const panel = $('#roster-tag-organizer'), list = $('#roster-tag-group-list');
+    const panel = $('#roster-tag-organizer'), categoryList = $('#roster-tag-category-list'), assignmentList = $('#roster-tag-assignment-list');
     panel.classList.toggle('hidden', !state.isRosterAdmin);
-    if (!state.isRosterAdmin) { list.innerHTML = ''; return; }
+    if (!state.isRosterAdmin) { categoryList.innerHTML = ''; assignmentList.innerHTML = ''; return; }
+    const categories = [...state.rosterTagCategories];
+    const createForm = $('#roster-tag-group-form');
+    createForm.onsubmit = async event => {
+      event.preventDefault();
+      if (!state.isRosterAdmin) return;
+      const input = $('#roster-tag-group-name'), name = input.value.trim();
+      if (!name) { input.focus(); return; }
+      const submit = $('button[type="submit"]', createForm); submit.disabled = true;
+      const { error } = await client.from('roster_tag_categories').insert({ name });
+      submit.disabled = false;
+      if (error) { toast(error.code === '23505' ? 'That tag group already exists.' : errorMessage(error)); return; }
+      createForm.reset(); toast('Tag group created.'); await loadData();
+    };
+    categoryList.innerHTML = categories.length ? categories.map(group => {
+      const assignedCount = [...state.rosterTagGroups.values()].filter(name => name === group).length;
+      return `<form class="tag-category-row" data-edit-tag-category="${escapeHtml(group)}"><label><span class="visually-hidden">Group name</span><input data-category-name maxlength="60" required value="${escapeHtml(group)}"></label><small>${assignedCount} tag${assignedCount === 1 ? '' : 's'}</small><div class="tag-category-actions"><button class="secondary" type="submit">Save name</button><button class="remove-actor delete-tag-category" type="button" data-name="${escapeHtml(group)}">Delete</button></div></form>`;
+    }).join('') : '<p class="tag-group-empty">No groups yet. Create a group name that fits this production.</p>';
+    $$('[data-edit-tag-category]', categoryList).forEach(form => form.addEventListener('submit', async event => {
+      event.preventDefault();
+      if (!state.isRosterAdmin) return;
+      const oldName = form.dataset.editTagCategory, name = $('[data-category-name]', form).value.trim();
+      if (!name || name === oldName) return;
+      $('button[type="submit"]', form).disabled = true;
+      const { error } = await client.from('roster_tag_categories').update({ name }).eq('name', oldName);
+      if (error) { toast(error.code === '23505' ? 'That tag group already exists.' : errorMessage(error)); $('button[type="submit"]', form).disabled = false; return; }
+      if (state.openAttendanceTagGroups.delete(oldName)) state.openAttendanceTagGroups.add(name);
+      toast('Tag group renamed.'); await loadData();
+    }));
+    $$('.delete-tag-category', categoryList).forEach(button => button.addEventListener('click', async () => {
+      if (!state.isRosterAdmin) return;
+      const name = button.dataset.name;
+      if (!confirm(`Delete “${name}”? Tags in this group will become unassigned. Their saved tag text and attendance history will remain.`)) return;
+      button.disabled = true;
+      const { error } = await client.from('roster_tag_categories').delete().eq('name', name);
+      if (error) { toast(errorMessage(error)); button.disabled = false; return; }
+      state.openAttendanceTagGroups.delete(name); toast('Tag group deleted.'); await loadData();
+    }));
     const tags = allRosterTags();
-    list.innerHTML = tags.length ? tags.map(tag => {
-      const key = tag.toLocaleLowerCase(), group = state.rosterTagGroups.get(key) || 'Other';
-      return `<label class="roster-tag-group-row"><span>${escapeHtml(tag)}</span><select data-roster-tag-group="${escapeHtml(key)}" aria-label="Group for ${escapeHtml(tag)}"><option value="Other" ${group === 'Other' ? 'selected' : ''}>Other</option><option value="Song" ${group === 'Song' ? 'selected' : ''}>Songs</option><option value="Scene" ${group === 'Scene' ? 'selected' : ''}>Scenes</option></select></label>`;
-    }).join('') : '<p class="tag-group-empty">Add attendance tags to the cast roster. Then you can place each tag under Songs, Scenes, or Other.</p>';
-    $$('[data-roster-tag-group]', list).forEach(select => select.addEventListener('change', async () => {
+    assignmentList.innerHTML = tags.length ? tags.map(tag => {
+      const key = tag.toLocaleLowerCase(), group = state.rosterTagGroups.get(key) || '';
+      const categoryOptions = categories.map(category => `<option value="${escapeHtml(category)}" ${group === category ? 'selected' : ''}>${escapeHtml(category)}</option>`).join('');
+      return `<label class="roster-tag-group-row"><span>${escapeHtml(tag)}</span><select data-roster-tag-group="${escapeHtml(key)}" aria-label="Group for ${escapeHtml(tag)}"><option value="" ${group ? '' : 'selected'}>Unassigned</option>${categoryOptions}</select></label>`;
+    }).join('') : '<p class="tag-group-empty">Add attendance tags to the cast roster to assign them to groups.</p>';
+    $$('[data-roster-tag-group]', assignmentList).forEach(select => select.addEventListener('change', async () => {
       const key = select.dataset.rosterTagGroup, group = select.value;
       select.disabled = true;
-      const { error } = await client.from('roster_tag_groups').upsert({ tag_key: key, group_name: group, updated_at: new Date().toISOString() }, { onConflict: 'tag_key' });
-      if (error) { toast(errorMessage(error)); await loadData(); return; }
-      state.rosterTagGroups.set(key, group);
-      toast(`Tag grouped under ${group === 'Other' ? 'Other' : `${group}s`}.`);
+      const result = group
+        ? await client.from('roster_tag_groups').upsert({ tag_key: key, group_name: group, updated_at: new Date().toISOString() }, { onConflict: 'tag_key' })
+        : await client.from('roster_tag_groups').delete().eq('tag_key', key);
+      if (result.error) { toast(errorMessage(result.error)); await loadData(); return; }
+      if (group) state.rosterTagGroups.set(key, group); else state.rosterTagGroups.delete(key);
+      toast(group ? `Tag placed in “${group}”.` : 'Tag left ungrouped.');
       renderAttendance(); renderRosterTagGroups();
     }));
   }
