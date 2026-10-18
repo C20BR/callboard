@@ -6,7 +6,11 @@
   const client = configured && window.supabase ? window.supabase.createClient(config.supabaseUrl, config.supabaseAnonKey) : null;
   const $ = (selector, root = document) => root.querySelector(selector);
   const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
-  const state = { user: null, profile: null, isRosterAdmin: false, isTeacher: false, teacherEmails: [], calendarEmbedUrl: '', rosterTagCategories: [], rosterTagGroups: new Map(), openAttendanceTagGroups: new Set(), cast: [], types: [], sessions: [], records: [], statuses: new Map(), notes: new Map(), attendanceMode: 'all', attendanceTags: new Set(), attendancePersonIds: new Set(), attendanceNameSearch: '', rosterSearch: '', overviewSearch: '', bulkTagPersonSearch: '', bulkTagSourceFilter: '', bulkTagSelectedIds: new Set() };
+  function savedThemeKey() {
+    try { const key = localStorage.getItem('callboard-theme'); return ['spotlight', 'nine_to_five'].includes(key) ? key : 'nine_to_five'; }
+    catch { return 'nine_to_five'; }
+  }
+  const state = { user: null, profile: null, isRosterAdmin: false, isTeacher: false, teacherEmails: [], calendarEmbedUrl: '', themeKey: savedThemeKey(), themeAvailable: false, activity: [], activityError: null, rosterTagCategories: [], rosterTagGroups: new Map(), openAttendanceTagGroups: new Set(), cast: [], types: [], sessions: [], records: [], statuses: new Map(), notes: new Map(), attendanceMode: 'all', attendanceTags: new Set(), attendancePersonIds: new Set(), attendanceNameSearch: '', rosterSearch: '', overviewSearch: '', bulkTagPersonSearch: '', bulkTagSourceFilter: '', bulkTagSelectedIds: new Set() };
   const attendanceStatusValues = ['Here', 'Late', 'Absent'];
   const historyStatusValues = [...attendanceStatusValues, 'Exempt'];
   let toastTimer;
@@ -19,6 +23,14 @@
   function setConnection(online, label) {
     const el = $('#connection'); el.classList.toggle('online', online); el.lastChild.textContent = ` ${label}`;
   }
+  function applyTheme(themeKey) {
+    state.themeKey = ['spotlight', 'nine_to_five'].includes(themeKey) ? themeKey : 'nine_to_five';
+    document.documentElement.dataset.theme = state.themeKey;
+    const themeColor = $('meta[name="theme-color"]');
+    if (themeColor) themeColor.content = state.themeKey === 'nine_to_five' ? '#fff6ed' : '#090a11';
+    try { localStorage.setItem('callboard-theme', state.themeKey); } catch { /* Theme still applies for this visit. */ }
+  }
+  applyTheme(state.themeKey);
   function showAuth(message = '') {
     $('#auth-view').classList.remove('hidden'); $('#app-view').classList.add('hidden'); $('#signout').classList.add('hidden');
     $('#login-form').classList.remove('hidden'); $('#setup-form').classList.add('hidden'); $('#recovery-form').classList.add('hidden');
@@ -76,10 +88,18 @@
     }
     if (adminResult.error) toast(errorMessage(adminResult.error));
     if (teacherResult.error) toast(errorMessage(teacherResult.error));
+    const [themeResult, activityResult] = await Promise.all([
+      client.from('callboard_settings').select('theme_key').eq('id', 'global').maybeSingle(),
+      client.from('callboard_activity').select('id,actor_name,event_type,summary,details,created_at').order('created_at', { ascending: false }).order('id', { ascending: false }).limit(100)
+    ]);
+    state.themeAvailable = !themeResult.error && Boolean(themeResult.data);
+    applyTheme(state.themeAvailable ? themeResult.data.theme_key : 'nine_to_five');
+    state.activity = activityResult.data || [];
+    state.activityError = activityResult.error;
     $('#sync-message').classList.add('hidden');
     setConnection(true, 'Connected securely'); renderAll(); return true;
   }
-  function renderAll() { renderTypes(); renderLocation(); renderAttendance(); renderRoster(); renderHistory(); renderOverview(); renderCalendar(); renderAdmin(); }
+  function renderAll() { renderTypes(); renderLocation(); renderAttendance(); renderRoster(); renderHistory(); renderOverview(); renderActivity(); renderCalendar(); renderAdmin(); }
   function renderTypes() {
     const select = $('#session-type'), current = select.value;
     select.innerHTML = state.types.map(type => `<option value="${escapeHtml(type.name)}">${escapeHtml(type.name)}</option>`).join('');
@@ -253,7 +273,7 @@
     $('#roster-search-count').textContent = state.rosterSearch.trim()
       ? `Showing ${matchingCast.length} of ${state.cast.length} cast members`
       : `${state.cast.length} cast member${state.cast.length === 1 ? '' : 's'}`;
-    $('#cast-list').innerHTML = matchingCast.length ? matchingCast.map(actor => `<div class="cast-row"><div class="cast-main"><span class="avatar">${escapeHtml(actor.name.trim().split(/\s+/).map(p => p[0]).slice(0,2).join('').toUpperCase())}</span><span class="actor-details"><strong>${escapeHtml(actor.name)}</strong><small>${escapeHtml(actor.characters || 'Character not set')}</small>${tagBadges(actor.tags)}</span></div>${state.isRosterAdmin ? `<span><button class="remove-actor edit-actor" data-id="${actor.id}">Edit</button><button class="remove-actor delete-actor" data-id="${actor.id}">Remove</button></span>` : ''}</div>`).join('') : state.cast.length
+    $('#cast-list').innerHTML = matchingCast.length ? matchingCast.map(actor => `<div class="cast-row"><div class="cast-main"><span class="avatar">${escapeHtml(actor.name.trim().split(/\s+/).map(p => p[0]).slice(0,2).join('').toUpperCase())}</span><span class="actor-details"><strong>${escapeHtml(actor.name)}</strong><small>${escapeHtml(actor.characters || 'Character not set')}</small>${tagBadges(actor.tags)}</span></div>${state.isRosterAdmin ? `<span><button class="remove-actor edit-actor" data-id="${actor.id}">Edit</button><button class="remove-actor delete-actor" data-id="${actor.id}">Remove</button></span>` : state.isTeacher ? `<span><button class="remove-actor edit-cast-tags" data-id="${actor.id}">Edit tags</button></span>` : ''}</div>`).join('') : state.cast.length
       ? '<div class="empty-state">No cast members match that name or character.</div>'
       : '<div class="empty-state">The cast roster is empty. Ask the production administrator to add cast members.</div>';
     $$('.edit-actor').forEach(button => button.addEventListener('click', async () => {
@@ -263,6 +283,13 @@
       const tags = prompt('Attendance tags, separate multiple tags with commas', normalizeTags(actor.tags).join(', ')); if (tags === null) return;
       const { error } = await client.from('cast_members').update({ name: name.trim(), characters: characters.trim(), tags: normalizeTags(tags) }).eq('id', actor.id);
       if (error) toast(errorMessage(error)); else { toast('Cast member updated.'); await loadData(); }
+    }));
+    $$('.edit-cast-tags').forEach(button => button.addEventListener('click', async () => {
+      if (!state.isTeacher && !state.isRosterAdmin) return;
+      const actor = state.cast.find(item => item.id === button.dataset.id); if (!actor) return;
+      const tags = prompt(`Attendance tags for ${actor.name}, separated by commas`, normalizeTags(actor.tags).join(', ')); if (tags === null) return;
+      const { error } = await client.from('cast_members').update({ tags: normalizeTags(tags) }).eq('id', actor.id);
+      if (error) toast(errorMessage(error)); else { toast(`Tags updated for ${actor.name}.`); await loadData(); }
     }));
     $$('.delete-actor').forEach(button => button.addEventListener('click', async () => {
       const actor = state.cast.find(item => item.id === button.dataset.id); if (!actor) return;
@@ -403,10 +430,34 @@
       : '<div class="empty-state">Your attendance chart will appear once you add cast members.</div>';
     $('#recent-list').innerHTML = state.sessions.length ? state.sessions.slice(0, 4).map(session => `<div class="recent-item"><div><strong>${escapeHtml(session.rehearsal_type)}</strong><small>${escapeHtml(new Date(`${session.rehearsal_date}T12:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }))}${session.rehearsal_time ? ` · ${escapeHtml(formatTime(session.rehearsal_time))}` : ''} · ${escapeHtml(session.taker)}</small></div><span class="recent-tag">${recordsFor(session.id).filter(record => record.status !== 'Exempt').length} called</span></div>`).join('') : '<div class="empty-state">No rehearsals saved yet.</div>';
   }
+  function renderActivity() {
+    const list = $('#activity-list');
+    if (state.activityError) {
+      list.innerHTML = '<p class="empty-state">Recent changes are unavailable. Refresh the page or contact the production administrator.</p>';
+      return;
+    }
+    list.innerHTML = state.activity.length ? state.activity.map(item => {
+      const date = new Date(item.created_at);
+      const timestamp = Number.isNaN(date.getTime()) ? '' : new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }).format(date);
+      return `<article class="activity-entry"><span class="activity-entry-mark" aria-hidden="true"></span><div class="activity-entry-content"><div class="activity-entry-heading"><strong>${escapeHtml(item.actor_name || 'Production team')}</strong><time datetime="${escapeHtml(item.created_at)}">${escapeHtml(timestamp)}</time></div><p>${escapeHtml(item.summary)}</p></div></article>`;
+    }).join('') : '<p class="empty-state">No changes have been recorded yet. Tag edits, rehearsal saves, and attendance notes will appear here.</p>';
+  }
+  function showOverviewView(name) {
+    const showActivity = name === 'activity';
+    $('#overview-summary-view').classList.toggle('hidden', showActivity);
+    $('#overview-activity-view').classList.toggle('hidden', !showActivity);
+    $$('[data-overview-view]').forEach(button => {
+      const selected = button.dataset.overviewView === name;
+      button.classList.toggle('active', selected);
+      button.setAttribute('aria-selected', String(selected));
+    });
+  }
   function renderAdmin() {
     const tab = $('.tab[data-page="admin"]'); tab.classList.toggle('hidden', !state.isRosterAdmin);
     if (!state.isRosterAdmin) return;
     $('#google-calendar-url').value = state.calendarEmbedUrl;
+    $('#theme-key').value = state.themeKey;
+    $('#theme-form').classList.toggle('hidden', !state.themeAvailable);
     $('#remove-calendar-button').disabled = !state.calendarEmbedUrl;
     $('#teacher-list').innerHTML = state.teacherEmails.length ? state.teacherEmails.map(({ email }) => `<div class="teacher-role-row"><span>${escapeHtml(email)}</span><button type="button" class="remove-actor remove-teacher" data-email="${escapeHtml(email)}">Remove teacher role</button></div>`).join('') : '<p class="muted">No teachers assigned yet. Everyone else remains a stage manager.</p>';
     $$('.remove-teacher').forEach(button => button.addEventListener('click', async () => {
@@ -442,6 +493,21 @@
   $$('[data-goto]').forEach(button => button.addEventListener('click', () => gotoPage(button.dataset.goto)));
   $$('.bulk-actions button').forEach(button => button.addEventListener('click', () => { castForAttendance().forEach(actor => { state.statuses.set(actor.id, button.dataset.bulk); if (!['Late', 'Absent'].includes(button.dataset.bulk)) state.notes.delete(actor.id); }); renderAttendance(); }));
   $('#chart-mode').addEventListener('change', renderOverview);
+  $$('[data-overview-view]').forEach(button => {
+    button.addEventListener('click', () => showOverviewView(button.dataset.overviewView));
+    button.addEventListener('keydown', event => {
+      if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+      event.preventDefault();
+      const tabs = $$('[data-overview-view]'), index = tabs.indexOf(button);
+      const nextIndex = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : (index + (event.key === 'ArrowRight' ? 1 : tabs.length - 1)) % tabs.length;
+      tabs[nextIndex].focus(); showOverviewView(tabs[nextIndex].dataset.overviewView);
+    });
+  });
+  $('#activity-refresh').addEventListener('click', async event => {
+    const button = event.currentTarget; button.disabled = true;
+    const { data, error } = await client.from('callboard_activity').select('id,actor_name,event_type,summary,details,created_at').order('created_at', { ascending: false }).order('id', { ascending: false }).limit(100);
+    state.activity = data || []; state.activityError = error; renderActivity(); button.disabled = false;
+  });
   $('#today-button').addEventListener('click', () => { $('#session-date').value = localDate(); });
   $('#session-date').value = localDate();
   function refreshDuplicateHint() {
@@ -555,6 +621,17 @@
     } else {
       $('#teacher-form').reset(); toast('Teacher role assigned.'); await loadData();
     }
+  });
+  $('#theme-form').addEventListener('submit', async event => {
+    event.preventDefault();
+    if (!state.isRosterAdmin || !state.themeAvailable) return;
+    const key = $('#theme-key').value;
+    const submit = $('button[type="submit"]', event.currentTarget); submit.disabled = true;
+    const { error } = await client.from('callboard_settings').update({ theme_key: key }).eq('id', 'global');
+    submit.disabled = false;
+    if (error) { toast(errorMessage(error)); return; }
+    applyTheme(key);
+    toast('Production colors saved for everyone.'); await loadData();
   });
   $('#calendar-form').addEventListener('submit', async event => {
     event.preventDefault();
