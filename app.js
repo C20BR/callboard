@@ -90,10 +90,10 @@
     if (teacherResult.error) toast(errorMessage(teacherResult.error));
     const [themeResult, activityResult] = await Promise.all([
       client.from('callboard_settings').select('theme_key').eq('id', 'global').maybeSingle(),
-      client.from('callboard_activity').select('id,actor_name,event_type,summary,details,created_at').order('created_at', { ascending: false }).order('id', { ascending: false }).limit(100)
+      client.from('callboard_activity').select('id,actor_name,event_type,summary,details,created_at,target_type,target_id').order('created_at', { ascending: false }).order('id', { ascending: false }).limit(500)
     ]);
     state.themeAvailable = !themeResult.error && Boolean(themeResult.data);
-    applyTheme(state.themeAvailable ? themeResult.data.theme_key : 'nine_to_five');
+    applyTheme(state.themeAvailable ? themeResult.data.theme_key : savedThemeKey());
     state.activity = activityResult.data || [];
     state.activityError = activityResult.error;
     $('#sync-message').classList.add('hidden');
@@ -359,34 +359,113 @@
   }
   function recordsFor(sessionId) { return state.records.filter(record => record.session_id === sessionId); }
   function canManageRehearsals() { return state.isRosterAdmin || state.isTeacher; }
-  function renderHistory() {
-    const list = $('#history-list');
-    if (!state.sessions.length) { list.innerHTML = '<article class="card empty-state">No rehearsals saved yet. Your session history will appear here.</article>'; return; }
-    list.innerHTML = state.sessions.map(session => {
-      const records = recordsFor(session.id);
-      const date = new Date(`${session.rehearsal_date}T12:00:00`).toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' });
-      const time = formatTime(session.rehearsal_time);
-      return `<article class="card history-session"><div class="history-session-head"><div><h3>${escapeHtml(session.rehearsal_type)} <span class="accent">·</span> ${escapeHtml(date)}${time ? ` <span class="session-time-label">· ${escapeHtml(time)}</span>` : ''}</h3><p>Called by ${escapeHtml(session.taker)} · ${records.length} cast members recorded · Location: ${escapeHtml(session.location || 'Not set')}</p></div><span class="session-count">Edit records &nbsp;⌄</span></div><div class="history-details hidden">${records.map(record => { const recordStatuses = record.status === 'Exempt' ? historyStatusValues : attendanceStatusValues; return `<div class="history-row" data-record="${record.id}"><span class="history-actor"><strong>${escapeHtml(record.cast_members?.name || 'Former cast member')}</strong><small>${escapeHtml(record.cast_members?.characters || '')}</small></span><select aria-label="Attendance status">${recordStatuses.map(status => `<option ${record.status === status ? 'selected' : ''}>${status}</option>`).join('')}</select><input type="text" maxlength="500" aria-label="Attendance note" placeholder="Note for late arrival or absence" value="${escapeHtml(record.notes || '')}" ${['Late','Absent'].includes(record.status) ? '' : 'disabled'}></div>`; }).join('')}${canManageRehearsals() ? `<div class="history-location-row"><label>Location<input type="text" maxlength="160" data-session-location="${session.id}" value="${escapeHtml(session.location || '')}" placeholder="Add rehearsal location"></label><button type="button" class="secondary save-session-location" data-id="${session.id}">Save location</button></div>` : ''}<div class="save-row">${canManageRehearsals() ? `<button class="remove-actor delete-session" data-id="${session.id}">Delete this rehearsal…</button>` : '<span></span>'}<span class="muted">Changes sync to overview totals as you save each row.</span></div></div></article>`;
+  function timelineEntries() {
+    const sessionsById = new Map(state.sessions.map(session => [String(session.id), session]));
+    const representedSessions = new Set();
+    const entries = state.activity.map(activity => {
+      const session = activity.event_type === 'rehearsal_saved' && activity.target_type === 'rehearsal_session'
+        ? sessionsById.get(String(activity.target_id))
+        : null;
+      if (session) {
+        representedSessions.add(String(session.id));
+        return { kind: 'rehearsal', session, activity, createdAt: activity.created_at };
+      }
+      return { kind: 'activity', activity, createdAt: activity.created_at };
+    });
+    state.sessions.forEach(session => {
+      if (representedSessions.has(String(session.id))) return;
+      entries.push({ kind: 'rehearsal', session, activity: null, createdAt: session.created_at || `${session.rehearsal_date}T12:00:00` });
+    });
+    return entries.sort((left, right) => (Date.parse(right.createdAt) || 0) - (Date.parse(left.createdAt) || 0));
+  }
+  function timelineTime(value) {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? '' : new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }).format(date);
+  }
+  function activityDeleteButton(activity) {
+    // A saved rehearsal remains part of the canonical rehearsal history, so
+    // remove it through the rehearsal controls rather than hiding only its log.
+    return state.isRosterAdmin && activity.event_type !== 'rehearsal_saved'
+      ? `<button class="activity-delete-button delete-activity-log" type="button" data-id="${escapeHtml(activity.id)}" aria-label="Delete activity log entry">Delete log</button>`
+      : '';
+  }
+  function activityEntryMarkup(activity) {
+    const timestamp = timelineTime(activity.created_at);
+    return `<article class="activity-entry" data-activity-id="${escapeHtml(activity.id)}"><span class="activity-entry-mark" aria-hidden="true"></span><div class="activity-entry-content"><div class="activity-entry-heading"><div class="activity-entry-byline"><strong>${escapeHtml(activity.actor_name || 'Production team')}</strong><time datetime="${escapeHtml(activity.created_at)}">${escapeHtml(timestamp)}</time></div>${activityDeleteButton(activity)}</div><p>${escapeHtml(activity.summary)}</p></div></article>`;
+  }
+  function rehearsalEntryMarkup(entry, compact = false) {
+    const { session, activity } = entry;
+    const records = recordsFor(session.id);
+    const date = new Date(`${session.rehearsal_date}T12:00:00`).toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' });
+    const time = formatTime(session.rehearsal_time);
+    const summary = activity?.summary || `Saved ${session.rehearsal_type} rehearsal for ${date}.`;
+    const actor = activity?.actor_name || session.taker || 'Production team';
+    if (compact) {
+      return `<article class="activity-entry activity-entry-rehearsal" data-session-id="${escapeHtml(session.id)}"><span class="activity-entry-mark" aria-hidden="true"></span><div class="activity-entry-content"><div class="activity-entry-heading"><div class="activity-entry-byline"><strong>${escapeHtml(actor)}</strong><time datetime="${escapeHtml(entry.createdAt)}">${escapeHtml(timelineTime(entry.createdAt))}</time></div>${activity ? activityDeleteButton(activity) : ''}</div><p>${escapeHtml(summary)}${activity ? '' : ` ${records.length} cast members recorded.`}</p></div></article>`;
+    }
+    const recordRows = records.map(record => {
+      const recordStatuses = record.status === 'Exempt' ? historyStatusValues : attendanceStatusValues;
+      return `<div class="history-row" data-record="${record.id}"><span class="history-actor"><strong>${escapeHtml(record.cast_members?.name || 'Former cast member')}</strong><small>${escapeHtml(record.cast_members?.characters || '')}</small></span><select aria-label="Attendance status">${recordStatuses.map(status => `<option ${record.status === status ? 'selected' : ''}>${status}</option>`).join('')}</select><input type="text" maxlength="500" aria-label="Attendance note" placeholder="Note for late arrival or absence" value="${escapeHtml(record.notes || '')}" ${['Late','Absent'].includes(record.status) ? '' : 'disabled'}></div>`;
     }).join('');
-    $$('.history-session-head').forEach(head => head.addEventListener('click', () => $('.history-details', head.parentElement).classList.toggle('hidden')));
-    $$('.history-row').forEach(row => {
+    const locationControls = canManageRehearsals()
+      ? `<div class="history-location-row"><label>Location<input type="text" maxlength="160" data-session-location="${session.id}" value="${escapeHtml(session.location || '')}" placeholder="Add rehearsal location"></label><button type="button" class="secondary save-session-location" data-id="${session.id}">Save location</button></div>`
+      : '';
+    const deleteSessionControl = canManageRehearsals()
+      ? `<button class="remove-actor delete-session" type="button" data-id="${session.id}">Delete this rehearsal…</button>`
+      : '<span></span>';
+    return `<article class="card history-session"><div class="history-session-head" role="button" tabindex="0" aria-expanded="false"><div><h3>${escapeHtml(session.rehearsal_type)} <span class="accent">·</span> ${escapeHtml(date)}${time ? ` <span class="session-time-label">· ${escapeHtml(time)}</span>` : ''}</h3><p>Called by ${escapeHtml(session.taker)} · ${records.length} cast members recorded · Location: ${escapeHtml(session.location || 'Not set')}</p></div><div class="history-session-actions"><span class="session-count">Edit records &nbsp;⌄</span>${activity ? activityDeleteButton(activity) : ''}</div></div><div class="history-details hidden">${recordRows}${locationControls}<div class="save-row">${deleteSessionControl}<span class="muted">Changes sync to overview totals as you save each row.</span></div></div></article>`;
+  }
+  function bindActivityDeletion(container) {
+    $$('.delete-activity-log', container).forEach(button => button.addEventListener('click', async event => {
+      event.stopPropagation();
+      if (!state.isRosterAdmin) return;
+      const activity = state.activity.find(item => String(item.id) === button.dataset.id);
+      if (!activity) return;
+      if (!confirm(`Permanently delete this activity log entry?\n\n${activity.summary}\n\nThe rehearsal and attendance records will remain unchanged.`)) return;
+      button.disabled = true;
+      const { error } = await client.from('callboard_activity').delete().eq('id', activity.id);
+      if (error) { button.disabled = false; toast(errorMessage(error)); return; }
+      toast('Activity log entry deleted.'); await loadData();
+    }));
+  }
+  function renderHistory() {
+    const list = $('#history-list'), entries = timelineEntries();
+    const warning = state.activityError ? '<p class="activity-history-warning">Recent team changes could not load. Rehearsal records are still shown.</p>' : '';
+    if (!entries.length) {
+      list.innerHTML = `${warning}<article class="card empty-state">No production history yet. Rehearsals and team changes will appear here.</article>`;
+      return;
+    }
+    list.innerHTML = `${warning}${entries.map(entry => entry.kind === 'rehearsal' ? rehearsalEntryMarkup(entry) : activityEntryMarkup(entry.activity)).join('')}`;
+    $$('.history-session-head', list).forEach(head => {
+      const toggle = () => {
+        const details = $('.history-details', head.parentElement), expanded = head.getAttribute('aria-expanded') === 'true';
+        details.classList.toggle('hidden', expanded); head.setAttribute('aria-expanded', String(!expanded));
+      };
+      head.addEventListener('click', event => { if (!event.target.closest('button')) toggle(); });
+      head.addEventListener('keydown', event => {
+        if (!['Enter', ' '].includes(event.key) || event.target.closest('button')) return;
+        event.preventDefault(); toggle();
+      });
+    });
+    $$('.history-row', list).forEach(row => {
       const select = $('select', row), input = $('input', row);
       select.addEventListener('change', async () => { input.disabled = !['Late', 'Absent'].includes(select.value); if (input.disabled) input.value = ''; await updateRecord(row, select, input); });
       input.addEventListener('change', async () => updateRecord(row, select, input));
     });
-    $$('.save-session-location').forEach(button => button.addEventListener('click', async () => {
+    $$('.save-session-location', list).forEach(button => button.addEventListener('click', async () => {
       if (!canManageRehearsals()) return;
-      const input = $(`[data-session-location="${button.dataset.id}"]`);
+      const input = $(`[data-session-location="${button.dataset.id}"]`, list);
       const { error } = await client.from('rehearsal_sessions').update({ location: input.value.trim() }).eq('id', button.dataset.id);
       if (error) toast(errorMessage(error)); else { toast('Rehearsal location saved.'); await loadData(); }
     }));
-    $$('.delete-session').forEach(button => button.addEventListener('click', async () => {
+    $$('.delete-session', list).forEach(button => button.addEventListener('click', async () => {
       if (!canManageRehearsals()) return;
       const session = state.sessions.find(item => item.id === button.dataset.id); if (!session) return;
       if (!confirm(`Permanently delete the ${session.rehearsal_type} rehearsal on ${session.rehearsal_date} and all its attendance records? This cannot be undone.`)) return;
       const { error } = await client.from('rehearsal_sessions').delete().eq('id', session.id);
       if (error) toast(errorMessage(error)); else { toast('Rehearsal deleted.'); await loadData(); }
     }));
+    bindActivityDeletion(list);
   }
   async function updateRecord(row, select, input) {
     const { error } = await client.from('attendance_records').update({ status: select.value, notes: input.value.trim(), updated_at: new Date().toISOString() }).eq('id', row.dataset.record);
@@ -431,16 +510,12 @@
     $('#recent-list').innerHTML = state.sessions.length ? state.sessions.slice(0, 4).map(session => `<div class="recent-item"><div><strong>${escapeHtml(session.rehearsal_type)}</strong><small>${escapeHtml(new Date(`${session.rehearsal_date}T12:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }))}${session.rehearsal_time ? ` · ${escapeHtml(formatTime(session.rehearsal_time))}` : ''} · ${escapeHtml(session.taker)}</small></div><span class="recent-tag">${recordsFor(session.id).filter(record => record.status !== 'Exempt').length} called</span></div>`).join('') : '<div class="empty-state">No rehearsals saved yet.</div>';
   }
   function renderActivity() {
-    const list = $('#activity-list');
-    if (state.activityError) {
-      list.innerHTML = '<p class="empty-state">Recent changes are unavailable. Refresh the page or contact the production administrator.</p>';
-      return;
-    }
-    list.innerHTML = state.activity.length ? state.activity.map(item => {
-      const date = new Date(item.created_at);
-      const timestamp = Number.isNaN(date.getTime()) ? '' : new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }).format(date);
-      return `<article class="activity-entry"><span class="activity-entry-mark" aria-hidden="true"></span><div class="activity-entry-content"><div class="activity-entry-heading"><strong>${escapeHtml(item.actor_name || 'Production team')}</strong><time datetime="${escapeHtml(item.created_at)}">${escapeHtml(timestamp)}</time></div><p>${escapeHtml(item.summary)}</p></div></article>`;
-    }).join('') : '<p class="empty-state">No changes have been recorded yet. Tag edits, rehearsal saves, and attendance notes will appear here.</p>';
+    const list = $('#activity-list'), entries = timelineEntries();
+    const warning = state.activityError ? '<p class="activity-history-warning">Recent team changes could not load. Rehearsal history is still shown.</p>' : '';
+    list.innerHTML = entries.length
+      ? `${warning}${entries.map(entry => entry.kind === 'rehearsal' ? rehearsalEntryMarkup(entry, true) : activityEntryMarkup(entry.activity)).join('')}`
+      : `${warning}<p class="empty-state">No production history yet. Rehearsals and team changes will appear here.</p>`;
+    bindActivityDeletion(list);
   }
   function showOverviewView(name) {
     const showActivity = name === 'activity';
@@ -456,8 +531,13 @@
     const tab = $('.tab[data-page="admin"]'); tab.classList.toggle('hidden', !state.isRosterAdmin);
     if (!state.isRosterAdmin) return;
     $('#google-calendar-url').value = state.calendarEmbedUrl;
-    $('#theme-key').value = state.themeKey;
-    $('#theme-form').classList.toggle('hidden', !state.themeAvailable);
+    $$('input[name="theme_key"]', $('#theme-form')).forEach(input => {
+      input.checked = input.value === state.themeKey;
+      input.closest('.theme-choice').classList.toggle('selected', input.checked);
+    });
+    const themeStatus = $('#theme-save-status');
+    themeStatus.textContent = state.themeAvailable ? '' : 'The saved palette is still syncing. You can choose one now and save again if needed.';
+    themeStatus.classList.toggle('hidden', state.themeAvailable);
     $('#remove-calendar-button').disabled = !state.calendarEmbedUrl;
     $('#teacher-list').innerHTML = state.teacherEmails.length ? state.teacherEmails.map(({ email }) => `<div class="teacher-role-row"><span>${escapeHtml(email)}</span><button type="button" class="remove-actor remove-teacher" data-email="${escapeHtml(email)}">Remove teacher role</button></div>`).join('') : '<p class="muted">No teachers assigned yet. Everyone else remains a stage manager.</p>';
     $$('.remove-teacher').forEach(button => button.addEventListener('click', async () => {
@@ -505,8 +585,8 @@
   });
   $('#activity-refresh').addEventListener('click', async event => {
     const button = event.currentTarget; button.disabled = true;
-    const { data, error } = await client.from('callboard_activity').select('id,actor_name,event_type,summary,details,created_at').order('created_at', { ascending: false }).order('id', { ascending: false }).limit(100);
-    state.activity = data || []; state.activityError = error; renderActivity(); button.disabled = false;
+    const { data, error } = await client.from('callboard_activity').select('id,actor_name,event_type,summary,details,created_at,target_type,target_id').order('created_at', { ascending: false }).order('id', { ascending: false }).limit(500);
+    state.activity = data || []; state.activityError = error; renderActivity(); renderHistory(); button.disabled = false;
   });
   $('#today-button').addEventListener('click', () => { $('#session-date').value = localDate(); });
   $('#session-date').value = localDate();
@@ -622,14 +702,19 @@
       $('#teacher-form').reset(); toast('Teacher role assigned.'); await loadData();
     }
   });
+  $$('input[name="theme_key"]').forEach(input => input.addEventListener('change', () => {
+    $$('.theme-choice').forEach(choice => choice.classList.toggle('selected', $('input', choice).checked));
+  }));
   $('#theme-form').addEventListener('submit', async event => {
     event.preventDefault();
-    if (!state.isRosterAdmin || !state.themeAvailable) return;
-    const key = $('#theme-key').value;
+    if (!state.isRosterAdmin) return;
+    const key = $('input[name="theme_key"]:checked', event.currentTarget)?.value;
+    if (!['spotlight', 'nine_to_five'].includes(key)) return;
     const submit = $('button[type="submit"]', event.currentTarget); submit.disabled = true;
-    const { error } = await client.from('callboard_settings').update({ theme_key: key }).eq('id', 'global');
+    const { data, error } = await client.from('callboard_settings').update({ theme_key: key }).eq('id', 'global').select('theme_key').maybeSingle();
     submit.disabled = false;
-    if (error) { toast(errorMessage(error)); return; }
+    if (error || !data) { toast(error ? errorMessage(error) : 'The production palette could not be saved. Please refresh and try again.'); return; }
+    state.themeAvailable = true;
     applyTheme(key);
     toast('Production colors saved for everyone.'); await loadData();
   });

@@ -7,7 +7,7 @@ A mobile-friendly attendance tracker for rehearsal teams. It runs as a static si
 - One shared cast roster; multiple characters are stored together on each actor.
 - Here, Late, and Absent statuses, with bulk actions and a date helper.
 - Shared roster tags such as Ensemble, Soloist, and Main character. The production administrator can create, rename, and delete custom tag groups, assign tags to them, bulk-add a tag to people found by name/character or an existing tag, and attendance takers can filter by one or more grouped tags or select cast members by name without changing saved tags. Teachers can edit cast members’ attendance tags without changing names or characters.
-- An authorized-team activity feed records tag, tag-group, theme, rehearsal, and attendance-note changes with the account name and timestamp.
+- One chronological production history combines rehearsal records with tag, roster-name, theme, and attendance changes. Each entry shows the team member and time; note text is never copied into the activity log. Only the production administrator can delete individual activity entries.
 - Saved color palettes: the new Dolly-inspired 9 to 5 look and the original Spotlight look can be switched by the production administrator.
 - Any authorized team member can search the roster or overview by student or character name. The roster shows each match's tags; the overview shows matching absence, lateness, and call-in totals.
 - Music, Full Cast, and Scene(s) built-in types, plus custom types.
@@ -20,7 +20,7 @@ A mobile-friendly attendance tracker for rehearsal teams. It runs as a static si
 - The production administrator can assign teacher roles to already-invited, authorized accounts. Everyone else is a stage manager by default. Teachers can edit attendance tags, delete individual rehearsals, and change rehearsal locations. They cannot access the Admin tab, edit cast names or characters, assign roles, or clear all history.
 - Rehearsal locations are visible to the whole team. The production administrator and teachers can change a location; each rehearsal type remembers its latest default so stage managers see it when taking attendance.
 - An optional, read-only Google Calendar embed is visible to signed-in Callboard users. Google Calendar still controls its own sharing permissions; calendar events are not copied into attendance records.
-- An administrator-only tab can assign/remove teacher roles, clear rehearsal history, or, after history is cleared, clear the cast roster.
+- An administrator-only tab can assign/remove teacher roles, delete individual activity log entries, clear rehearsal history, or, after history is cleared, clear the cast roster.
 
 Call-ins count one Here, Late, or Absent attendance record per person per rehearsal. The tag or name selection determines who has a record on each new attendance sheet; cast members outside the selection are left off that session. Name selection is temporary and does not edit roster tags. Older Exempt records remain in history and are excluded from call-in totals. There is no separate expected-rehearsal schedule, so an actor without a record in a session is not counted.
 
@@ -35,10 +35,11 @@ Call-ins count one Here, Late, or Absent attendance record per person per rehear
 7. In the SQL Editor, run [`supabase/migration_teacher_roles_and_locations.sql`](supabase/migration_teacher_roles_and_locations.sql). Existing accounts stay stage managers; it adds blank location fields and the calendar setting without changing attendance or assigning anyone elevated access.
 8. In the SQL Editor, run [`supabase/migration_invite_allowlist_and_tag_groups.sql`](supabase/migration_invite_allowlist_and_tag_groups.sql). It adds tag-assignment storage and automatically adds newly invited accounts to Callboard's allowlist. It does not change existing cast or attendance data.
 9. In the SQL Editor, run [`supabase/migration_custom_tag_groups.sql`](supabase/migration_custom_tag_groups.sql). It allows the production administrator to create, rename, and delete tag groups in Callboard. Existing tags and attendance records stay in place; old fixed-group assignments become unassigned.
-10. In the SQL Editor, run [`supabase/migration_teacher_tags_theme_activity.sql`](supabase/migration_teacher_tags_theme_activity.sql). This lets teachers edit tags only, adds the saved production palette, and creates an activity feed readable by authorized production accounts. The feed is trigger-written, capped at 500 stored entries, does not copy note text into the activity log, and does not expose insert/edit/delete controls to browser users.
-11. In **Authentication → Providers → Email**, disable public sign-ups. Keep email/password sign-in enabled.
-12. In **Authentication → URL Configuration**, set Site URL and add the GitHub Pages site URL to the allowed redirect URLs (including the site root).
-13. Invite each production team member under **Authentication → Users**. New dashboard invitations are automatically added to `public.authorized_users` by the migration, so you no longer need to add the same email manually. The invited person opens the email link at Callboard and chooses a username and password. Only invited accounts can read production data; never enable public sign-ups for this project.
+10. In the SQL Editor, run [`supabase/migration_teacher_tags_theme_activity.sql`](supabase/migration_teacher_tags_theme_activity.sql). This lets teachers edit tags only, adds the saved production palette, and creates an activity feed readable by authorized production accounts. The feed is trigger-written, capped at 500 stored entries, and does not copy note text into the activity log.
+11. In the SQL Editor, run [migration_activity_log_admin_delete.sql](supabase/migration_activity_log_admin_delete.sql). This allows only roster administrators to delete individual activity entries and refreshes the API schema cache.
+12. In **Authentication → Providers → Email**, disable public sign-ups. Keep email/password sign-in enabled.
+13. In **Authentication → URL Configuration**, set Site URL and add the GitHub Pages site URL to the allowed redirect URLs (including the site root).
+14. Invite each production team member under **Authentication → Users**. New dashboard invitations are automatically added to `public.authorized_users` by the migration, so you no longer need to add the same email manually. The invited person opens the email link at Callboard and chooses a username and password. Only invited accounts can read production data; never enable public sign-ups for this project.
 
    Accounts invited before this migration are not automatically backfilled. If an existing invited account is missing from the allowlist, add just that account once from the SQL Editor, in lowercase:
 
@@ -47,7 +48,7 @@ Call-ins count one Here, Late, or Absent attendance record per person per rehear
    ```
 
    Do not grant team members SQL Editor or project-owner access unless they need database administration.
-14. Add only the production administrator's email to `public.callboard_roster_admins`, in lowercase. Run this in SQL Editor after inviting that person:
+15. Add only the production administrator's email to `public.callboard_roster_admins`, in lowercase. Run this in SQL Editor after inviting that person:
 
    ```sql
    insert into public.callboard_roster_admins (email)
@@ -57,8 +58,8 @@ Call-ins count one Here, Late, or Absent attendance record per person per rehear
 
    Do not add teachers to this table. Stage managers can take attendance and see the shared roster but cannot change cast members. Teachers can edit tags only. The admin table is separate from the general authorized-user allowlist.
 
-15. After deployment, sign in as the production administrator and use **Admin → Teacher roles** to assign teacher access to each teacher's exact sign-in email. The email must already have a Supabase invitation. Remove the role there to return someone to stage-manager permissions.
-16. To connect a Google Calendar, open its settings on a computer, choose **Integrate calendar**, and copy the calendar's embed URL (the `src` address in the embed code). In Callboard, open **Admin → Google Calendar** and paste that URL. Set sharing in Google Calendar before connecting it: a private calendar requires each viewer to have Google access, while a public calendar may be visible to anyone. Callboard sign-in does not also sign the viewer in to Google. The embed is read-only; attendance takers check it for the call, then save attendance separately in Callboard.
+16. After deployment, sign in as the production administrator and use **Admin → Teacher roles** to assign teacher access to each teacher's exact sign-in email. The email must already have a Supabase invitation. Remove the role there to return someone to stage-manager permissions.
+17. To connect a Google Calendar, open its settings on a computer, choose **Integrate calendar**, and copy the calendar's embed URL (the `src` address in the embed code). In Callboard, open **Admin → Google Calendar** and paste that URL. Set sharing in Google Calendar before connecting it: a private calendar requires each viewer to have Google access, while a public calendar may be visible to anyone. Callboard sign-in does not also sign the viewer in to Google. The embed is read-only; attendance takers check it for the call, then save attendance separately in Callboard.
 
 ## 2. Configure GitHub Pages
 
@@ -79,7 +80,7 @@ Open the deployed HTTPS Pages site in Safari, sign in, tap **Share**, then **Add
 
 Use **Export backup** while signed in to download a JSON backup to the current device. Store that file somewhere private. This is an export, not an automatic scheduled backup. Supabase project backups and recovery settings should also be configured for the production's retention needs.
 
-Teachers and the production administrator can delete individual rehearsals, with a confirmation prompt; deleting a rehearsal also removes its attendance records. Only the production administrator can clear all history or clear the roster. Each bulk action requires confirmation and is permanent. Individual cast members with saved records cannot be removed, which protects historical links; edit their name/characters instead.
+Teachers and the production administrator can delete individual rehearsals, with a confirmation prompt; deleting a rehearsal also removes its attendance records. Only the production administrator can delete individual activity-log entries, clear all rehearsal history, or clear the roster. Each bulk action requires confirmation and is permanent. Individual cast members with saved records cannot be removed, which protects historical links; edit their name/characters instead.
 
 ## Notes for maintainers
 
