@@ -361,31 +361,23 @@
   function canManageRehearsals() { return state.isRosterAdmin || state.isTeacher; }
   function timelineEntries() {
     const sessionsById = new Map(state.sessions.map(session => [String(session.id), session]));
-    const representedSessions = new Set();
-    const entries = state.activity.map(activity => {
+    // The Overview timeline is made from audit entries only. If an admin deletes
+    // a log, a saved rehearsal must not be re-added as an unlogged fallback row.
+    return state.activity.map(activity => {
       const session = activity.event_type === 'rehearsal_saved' && activity.target_type === 'rehearsal_session'
         ? sessionsById.get(String(activity.target_id))
         : null;
-      if (session) {
-        representedSessions.add(String(session.id));
-        return { kind: 'rehearsal', session, activity, createdAt: activity.created_at };
-      }
-      return { kind: 'activity', activity, createdAt: activity.created_at };
+      return session
+        ? { kind: 'rehearsal', session, activity, createdAt: activity.created_at }
+        : { kind: 'activity', activity, createdAt: activity.created_at };
     });
-    state.sessions.forEach(session => {
-      if (representedSessions.has(String(session.id))) return;
-      entries.push({ kind: 'rehearsal', session, activity: null, createdAt: session.created_at || `${session.rehearsal_date}T12:00:00` });
-    });
-    return entries.sort((left, right) => (Date.parse(right.createdAt) || 0) - (Date.parse(left.createdAt) || 0));
   }
   function timelineTime(value) {
     const date = new Date(value);
     return Number.isNaN(date.getTime()) ? '' : new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }).format(date);
   }
   function activityDeleteButton(activity) {
-    // A saved rehearsal remains part of the canonical rehearsal history, so
-    // remove it through the rehearsal controls rather than hiding only its log.
-    return state.isRosterAdmin && activity.event_type !== 'rehearsal_saved'
+    return state.isRosterAdmin
       ? `<button class="activity-delete-button delete-activity-log" type="button" data-id="${escapeHtml(activity.id)}" aria-label="Delete activity log entry">Delete log</button>`
       : '';
   }
@@ -413,7 +405,7 @@
     const deleteSessionControl = canManageRehearsals()
       ? `<button class="remove-actor delete-session" type="button" data-id="${session.id}">Delete this rehearsal…</button>`
       : '<span></span>';
-    return `<article class="card history-session"><div class="history-session-head" role="button" tabindex="0" aria-expanded="false"><div><h3>${escapeHtml(session.rehearsal_type)} <span class="accent">·</span> ${escapeHtml(date)}${time ? ` <span class="session-time-label">· ${escapeHtml(time)}</span>` : ''}</h3><p>Called by ${escapeHtml(session.taker)} · ${records.length} cast members recorded · Location: ${escapeHtml(session.location || 'Not set')}</p></div><div class="history-session-actions"><span class="session-count">Edit records &nbsp;⌄</span>${activity ? activityDeleteButton(activity) : ''}</div></div><div class="history-details hidden">${recordRows}${locationControls}<div class="save-row">${deleteSessionControl}<span class="muted">Changes sync to overview totals as you save each row.</span></div></div></article>`;
+    return `<article class="card history-session"><div class="history-session-head" role="button" tabindex="0" aria-expanded="false"><div><h3>${escapeHtml(session.rehearsal_type)} <span class="accent">·</span> ${escapeHtml(date)}${time ? ` <span class="session-time-label">· ${escapeHtml(time)}</span>` : ''}</h3><p>Called by ${escapeHtml(session.taker)} · ${records.length} cast members recorded · Location: ${escapeHtml(session.location || 'Not set')}</p></div><div class="history-session-actions"><span class="session-count">Edit records &nbsp;⌄</span></div></div><div class="history-details hidden">${recordRows}${locationControls}<div class="save-row">${deleteSessionControl}<span class="muted">Changes sync to overview totals as you save each row.</span></div></div></article>`;
   }
   function bindActivityDeletion(container) {
     $$('.delete-activity-log', container).forEach(button => button.addEventListener('click', async event => {
@@ -429,13 +421,21 @@
     }));
   }
   function renderHistory() {
-    const list = $('#history-list'), entries = timelineEntries();
-    const warning = state.activityError ? '<p class="activity-history-warning">Recent team changes could not load. Rehearsal records are still shown.</p>' : '';
-    if (!entries.length) {
-      list.innerHTML = `${warning}<article class="card empty-state">No production history yet. Rehearsals and team changes will appear here.</article>`;
+    const list = $('#history-list');
+    const activityBySessionId = new Map(state.activity
+      .filter(activity => activity.event_type === 'rehearsal_saved' && activity.target_type === 'rehearsal_session')
+      .map(activity => [String(activity.target_id), activity]));
+    const sessions = state.sessions.map(session => ({
+      kind: 'rehearsal',
+      session,
+      activity: activityBySessionId.get(String(session.id)) || null,
+      createdAt: session.created_at || `${session.rehearsal_date}T12:00:00`
+    }));
+    if (!sessions.length) {
+      list.innerHTML = '<article class="card empty-state">No rehearsals saved yet. Rehearsals and attendance records will appear here.</article>';
       return;
     }
-    list.innerHTML = `${warning}${entries.map(entry => entry.kind === 'rehearsal' ? rehearsalEntryMarkup(entry) : activityEntryMarkup(entry.activity)).join('')}`;
+    list.innerHTML = sessions.map(entry => rehearsalEntryMarkup(entry)).join('');
     $$('.history-session-head', list).forEach(head => {
       const toggle = () => {
         const details = $('.history-details', head.parentElement), expanded = head.getAttribute('aria-expanded') === 'true';
@@ -465,7 +465,6 @@
       const { error } = await client.from('rehearsal_sessions').delete().eq('id', session.id);
       if (error) toast(errorMessage(error)); else { toast('Rehearsal deleted.'); await loadData(); }
     }));
-    bindActivityDeletion(list);
   }
   async function updateRecord(row, select, input) {
     const { error } = await client.from('attendance_records').update({ status: select.value, notes: input.value.trim(), updated_at: new Date().toISOString() }).eq('id', row.dataset.record);
@@ -511,10 +510,10 @@
   }
   function renderActivity() {
     const list = $('#activity-list'), entries = timelineEntries();
-    const warning = state.activityError ? '<p class="activity-history-warning">Recent team changes could not load. Rehearsal history is still shown.</p>' : '';
+    const warning = state.activityError ? '<p class="activity-history-warning">Recent production changes could not load. Use Refresh updates to try again.</p>' : '';
     list.innerHTML = entries.length
       ? `${warning}${entries.map(entry => entry.kind === 'rehearsal' ? rehearsalEntryMarkup(entry, true) : activityEntryMarkup(entry.activity)).join('')}`
-      : `${warning}<p class="empty-state">No production history yet. Rehearsals and team changes will appear here.</p>`;
+      : `${warning}<p class="empty-state">No recent production changes yet. Rehearsals and team updates will appear here.</p>`;
     bindActivityDeletion(list);
   }
   function showOverviewView(name) {
